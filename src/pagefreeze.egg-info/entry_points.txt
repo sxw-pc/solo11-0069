@@ -1,0 +1,2 @@
+[console_scripts]
+pagefreeze = pagefreeze.cli:main

@@ -1,0 +1,21 @@
+{
+  "now": "20240115000000",
+  "records": 33,
+  "requests": 16,
+  "responses": 15,
+  "revisits": 1,
+  "rejected": 1,
+  "skipped": {
+    "body_too_large": 1,
+    "robots_disallowed": 1,
+    "timeout": 1
+  },
+  "segments": 2,
+  "index_entries": 16,
+  "verify": "pass",
+  "index_sha256": "c55988d7c38af834c58e2c657dc5b7225a1ac66f1567b79cf78edaa3c44c840b",
+  "segment_sha256": {
+    "seg-00000.warc.gz": "0fac6e13831112fec1c2d7012447cf9646807feb3694c3e6e57afae882ec8e7a",
+    "seg-00001.warc.gz": "5747717fc6631844699921fa4cbd41d029443d05333aa2967a245be241a3b26a"
+  }
+}

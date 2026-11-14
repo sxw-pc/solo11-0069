@@ -1,0 +1,19 @@
+{
+  "seed_urls": [
+    "http://127.0.0.1:18080/"
+  ],
+  "max_depth": 3,
+  "max_pages": 40,
+  "max_concurrency": 3,
+  "request_interval_ms": 5,
+  "timeout_seconds": 0.4,
+  "max_body_bytes": 24000,
+  "allowed_mime": [
+    "text/html",
+    "text/css",
+    "text/plain",
+    "image/png"
+  ],
+  "respect_robots": true,
+  "user_agent": "pagefreeze-demo/0.1 (local archive)"
+}
