@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import SplitResult, urljoin, urlsplit, urlunsplit
 from .errors import PolicyError
 
 ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
@@ -78,6 +78,21 @@ def ensure_allowed_url(url: str) -> str:
             f"target is outside the loopback allowlist: {target_host(normalized)}",
         )
     return normalized
+
+
+def same_origin(first: str, second: str) -> bool:
+    """判断两个 URL 是否同 origin（scheme + 主机 + 有效端口均相同）。"""
+    left = urlsplit(normalize_url(first))
+    right = urlsplit(normalize_url(second))
+
+    def parts(parsed: SplitResult) -> tuple[str, str, int | None]:
+        scheme = parsed.scheme.lower()
+        host = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+        if port is None:
+            port = _DEFAULT_PORTS.get(scheme)
+        return scheme, host, port
+    return parts(left) == parts(right)
 
 
 def validate_bind_host(host: str) -> str:
@@ -155,6 +170,25 @@ def parse_robots(text: str, user_agent: str) -> RobotsRules:
             if any(agent == "*" for agent in group_agents):
                 selected.extend(group_rules)
     return RobotsRules(tuple(selected))
+
+
+def parse_robots_sitemaps(text: str) -> tuple[str, ...]:
+    """提取 robots.txt 中的 Sitemap 声明，按出现顺序保留原始声明 URL。
+
+    Sitemap 行不属于任何 User-agent 组，可出现在文件任意位置；此处只做
+    注释剥离与首尾空白清理，不做 URL 规范化，声明原文留给抓取层审计。
+    """
+    declared: list[str] = []
+    for line in text.splitlines():
+        clean = line.split("#", 1)[0].strip()
+        if not clean or ":" not in clean:
+            continue
+        field, value = clean.split(":", 1)
+        if field.strip().lower() == "sitemap":
+            content = value.strip()
+            if content:
+                declared.append(content)
+    return tuple(declared)
 
 
 def robots_url_for(url: str) -> str:

@@ -28,6 +28,9 @@ class CrawlConfig:
     allowed_mime: tuple[str, ...]
     respect_robots: bool
     user_agent: str
+    sitemap_entry: str
+    sitemap_max_depth: int
+    sitemap_max_files: int
 
 
 @dataclass(frozen=True)
@@ -155,6 +158,16 @@ def _validate_crawl(raw: dict[str, Any]) -> CrawlConfig:
         if not isinstance(item, str) or "/" not in item:
             raise ConfigError("CFG_MIME", "each allowed_mime entry must look like type/subtype")
         mime_values.append(item.strip().lower())
+    entry = _string(raw, "sitemap_entry", "crawl")
+    if entry not in ("priority", "bfs"):
+        raise ConfigError("CFG_SITEMAP_ENTRY",
+            "crawl.sitemap_entry must be 'priority' or 'bfs'")
+    sitemap_depth = _integer(raw, "sitemap_max_depth", "crawl", "CFG_SITEMAP_DEPTH_RANGE")
+    if not 0 <= sitemap_depth <= 4:
+        raise ConfigError("CFG_SITEMAP_DEPTH_RANGE", "crawl.sitemap_max_depth must be 0..4")
+    sitemap_files = _integer(raw, "sitemap_max_files", "crawl", "CFG_SITEMAP_FILES_RANGE")
+    if not 1 <= sitemap_files <= 256:
+        raise ConfigError("CFG_SITEMAP_FILES_RANGE", "crawl.sitemap_max_files must be 1..256")
     return CrawlConfig(seed_urls=tuple(seed_tuple),
         max_depth=depth,
         max_pages=pages,
@@ -165,6 +178,9 @@ def _validate_crawl(raw: dict[str, Any]) -> CrawlConfig:
         allowed_mime=tuple(mime_values),
         respect_robots=_boolean(raw, "respect_robots", "crawl"),
         user_agent=_string(raw, "user_agent", "crawl"),
+        sitemap_entry=entry,
+        sitemap_max_depth=sitemap_depth,
+        sitemap_max_files=sitemap_files,
     )
 
 
@@ -224,6 +240,9 @@ def _canonical(settings: CrawlConfig, archive: ArchiveConfig) -> str:
             "allowed_mime": list(settings.allowed_mime),
             "respect_robots": settings.respect_robots,
             "user_agent": settings.user_agent,
+            "sitemap_entry": settings.sitemap_entry,
+            "sitemap_max_depth": settings.sitemap_max_depth,
+            "sitemap_max_files": settings.sitemap_max_files,
         },
         "archive": {"archive_dir": archive.archive_dir,
             "segment_size_bytes": archive.segment_size_bytes,

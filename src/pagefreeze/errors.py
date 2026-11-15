@@ -35,6 +35,10 @@ class BodyTooLarge(FetchError):
         self.size = size
 
 
+class SitemapError(PagefreezeError):
+    """站点地图 XML 无法安全解析；单个文件失败不中断整体抓取。"""
+
+
 class WarcError(PagefreezeError):
     """WARC 记录构造或序列化错误。"""
 
