@@ -7,10 +7,19 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class FrontierItem:
-    """待抓取 URL 及其深度。"""
+    """待抓取 URL 及其页面深度；资源条目额外携带来源与资源深度。"""
     url: str
     urlkey: str
     depth: int
+    resource_depth: int = 0
+    source_url: str | None = None
+    kind: str | None = None
+    raw_reference: str | None = None
+    lineage: tuple[str, ...] = ()
+
+    @property
+    def is_resource(self) -> bool:
+        return self.resource_depth > 0
 
 
 class Frontier:
@@ -18,15 +27,29 @@ class Frontier:
 
     def __init__(self) -> None:
         self._queue: deque[FrontierItem] = deque()
-        self._seen: set[tuple[str, int]] = set()
+        self._seen: set[tuple[str, int, int]] = set()
 
-    def add(self, url: str, url_key: str, depth: int) -> bool:
-        """加入新条目；同 URL 同深度重复时不入队。"""
-        marker = (url_key, depth)
+    def add(self, url: str, url_key: str, depth: int, *,
+        resource_depth: int = 0,
+        source_url: str | None = None,
+        kind: str | None = None,
+        raw_reference: str | None = None,
+        lineage: tuple[str, ...] = (),
+    ) -> bool:
+        """加入新条目；同 URL、同页面深度、同资源深度重复时不入队。"""
+        marker = (url_key, depth, resource_depth)
         if marker in self._seen:
             return False
         self._seen.add(marker)
-        self._queue.append(FrontierItem(url=url, urlkey=url_key, depth=depth))
+        self._queue.append(FrontierItem(url=url,
+            urlkey=url_key,
+            depth=depth,
+            resource_depth=resource_depth,
+            source_url=source_url,
+            kind=kind,
+            raw_reference=raw_reference,
+            lineage=lineage,
+        ))
         return True
 
     def pop_batch(self, limit: int) -> list[FrontierItem]:
@@ -36,8 +59,15 @@ class Frontier:
             batch.append(self._queue.popleft())
         return batch
 
+    def drain(self) -> list[FrontierItem]:
+        """取出全部剩余条目；用于记录达到页数上限而未抓取的条目。"""
+        remaining = list(self._queue)
+        self._queue.clear()
+        return remaining
+
     def __bool__(self) -> bool:
         return bool(self._queue)
 
     def __len__(self) -> int:
         return len(self._queue)
+

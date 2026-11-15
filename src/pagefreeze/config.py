@@ -28,6 +28,7 @@ class CrawlConfig:
     allowed_mime: tuple[str, ...]
     respect_robots: bool
     user_agent: str
+    resource_depth: int = 0
 
 
 @dataclass(frozen=True)
@@ -155,6 +156,12 @@ def _validate_crawl(raw: dict[str, Any]) -> CrawlConfig:
         if not isinstance(item, str) or "/" not in item:
             raise ConfigError("CFG_MIME", "each allowed_mime entry must look like type/subtype")
         mime_values.append(item.strip().lower())
+    resource_depth = 0
+    if "resource_depth" in raw:
+        resource_depth = _integer(raw, "resource_depth", "crawl", "CFG_RESOURCE_DEPTH_RANGE")
+        if not 0 <= resource_depth <= 10:
+            raise ConfigError("CFG_RESOURCE_DEPTH_RANGE",
+                "crawl.resource_depth must be 0..10 (0 disables resource discovery)")
     return CrawlConfig(seed_urls=tuple(seed_tuple),
         max_depth=depth,
         max_pages=pages,
@@ -165,6 +172,7 @@ def _validate_crawl(raw: dict[str, Any]) -> CrawlConfig:
         allowed_mime=tuple(mime_values),
         respect_robots=_boolean(raw, "respect_robots", "crawl"),
         user_agent=_string(raw, "user_agent", "crawl"),
+        resource_depth=resource_depth,
     )
 
 
@@ -212,7 +220,8 @@ def _config_files(path: str | Path | None) -> tuple[Path, Path]:
     return candidate, candidate.parent / "archive.json"
 
 
-def _canonical(settings: CrawlConfig, archive: ArchiveConfig) -> str:
+def canonical_digest(settings: CrawlConfig, archive: ArchiveConfig) -> str:
+    """返回包含全部抓取/归档参数的稳定配置摘要。"""
     payload: dict[str, Any] = {"tool": "pagefreeze/0.1.0",
         "crawl": {"seed_urls": list(settings.seed_urls),
             "max_depth": settings.max_depth,
@@ -224,6 +233,7 @@ def _canonical(settings: CrawlConfig, archive: ArchiveConfig) -> str:
             "allowed_mime": list(settings.allowed_mime),
             "respect_robots": settings.respect_robots,
             "user_agent": settings.user_agent,
+            "resource_depth": settings.resource_depth,
         },
         "archive": {"archive_dir": archive.archive_dir,
             "segment_size_bytes": archive.segment_size_bytes,
@@ -243,7 +253,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
     crawl_path, archive_path = _config_files(path)
     crawl = _validate_crawl(_read_json(crawl_path))
     archive = _validate_archive(_read_json(archive_path))
-    return Settings(crawl=crawl, archive=archive, digest=_canonical(crawl, archive))
+    return Settings(crawl=crawl, archive=archive, digest=canonical_digest(crawl, archive))
 
 
 def paths_for(settings: Settings, out_root: str | Path) -> OutputPaths:

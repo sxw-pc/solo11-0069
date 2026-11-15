@@ -37,9 +37,9 @@ python -m pagefreeze replay --archive runtime/demo/archive --port 18081
 
 ```text
 DEMO_OK records=33 requests=16 responses=15 revisits=1 rejected=1 skipped=3 segments=2 verify=pass
-RUN_ID=run-185c9ec229d956d3
-ARCHIVE_SHA256=e8c3835bad77c75d47e992cf3ad133b3caf88ebb23f29692dde123f851514f5b
-INDEX_SHA256=c55988d7c38af834c58e2c657dc5b7225a1ac66f1567b79cf78edaa3c44c840b
+RUN_ID=run-135ca21f4eb157dd
+ARCHIVE_SHA256=326396d2835b4eaa766c69623a80bf7d63c35fd4016805946de73fdfa181a4d4
+INDEX_SHA256=682f964737c8e6cf75c60ca056a97efcbc19c444a1c83b0c21aa54afebc47645
 ```
 
 失败时退出码非零，并将稳定错误码输出到 stderr，例如 `ERR CFG_DEPTH_RANGE ...`。
@@ -52,7 +52,7 @@ runtime/demo/
 │   ├── seg-00000.warc.gz      # WARC/1.0 子集，固定 gzip 头
 │   ├── seg-00001.warc.gz      # 按未压缩字节数分卷
 │   └── index.cdx              # CDX 文本索引，偏移指向解压后的 WARC
-├── ledger.sqlite3             # runs/fetches/rejected_targets/records/verify_results
+├── ledger.sqlite3             # runs/fetches/rejected_targets/records/verify_results/resource_refs
 ├── reports/
 │   ├── report.json            # 稳定键序、无绝对路径/系统时间
 │   ├── report.md              # 中文人读报告
@@ -85,6 +85,26 @@ python -m pagefreeze demo     --config config --now 20240115000000 --out runtime
 
 `config/crawl.json` 控制种子、深度、页数上限、并发、请求间隔、超时、响应体上限、MIME 白名单、robots 和 UA；`config/archive.json` 控制归档目录、分卷阈值、摘要算法、索引/台账文件名、报告目录与 UUID 命名空间。配置会做边界与路径逃逸校验，错误码稳定（如 `CFG_DEPTH_RANGE`、`CFG_PATH`、`CFG_UUID`）。
 
+### 静态资源发现（`resource_depth`）
+
+`crawl.resource_depth`（0..10，默认 0）决定是否把页面的静态依赖带入本次归档：
+
+| 值 | 行为 | 归档内容 |
+| --- | --- | --- |
+| `0` | 关闭资源发现，只抓导航链接指向的页面 | 页面文档（历史行为） |
+| `1` | 抓取 HTML 直接引用的资源（`rel=stylesheet`、`img`/`source` 的 `src` 与 `srcset` 候选） | 页面 + 直接样式表/图片 |
+| `2` | 额外递归解析已抓 CSS 的 `url(...)` 与 `@import` | 页面 + 样式表 + 字体/背景图等间接依赖 |
+| `3+` | 继续展开更深层 CSS，直到导入环或该上限 | 更大的资源集合 |
+
+- 资源引用**不会**占用 `max_depth`（那是页面导航深度），但每一次资源请求都计入 `max_pages`。
+- 同一规范化 URL 从多个父资源被引用时只请求、只归档一次；每条引用边仍单独保留，可用 `source_url` 回查。
+- CSS 内的相对引用相对**该 CSS 自身**的 URL 解析，绝不相对最初 HTML 页面。
+- 外链样式表在连接前被拒绝并记入 `rejected_targets`；`data:`、非法 scheme、无法闭合的坏 token 记为 `skipped`，不中断其余引用。
+- 超过 `resource_depth` 的边记为 `skipped`/`resource_depth_limit`；导入环记为 `skipped`/`import_cycle` 且不重复请求。
+- 不执行 JavaScript、不抓取 `<script src>`、不改写 HTML/CSS。
+
+每条引用边的 `source_url`、原始 token、解析目标、类型、深度与结果写入台账 `resource_refs` 表，并汇总到 `report.json`/`report.md` 的“静态资源发现”一节。
+
 ## 文档
 
 - [docs/FORMAT.md](docs/FORMAT.md)：WARC 子集、CDX 字段、摘要与偏移、revisit 规则、固定 gzip。
@@ -105,6 +125,9 @@ A：这是 WARC/1.0 子集，使用标准记录头与 `application/http` 块，�
 
 **Q：归档中为什么有 `revisit` 而没有第二个响应体？**
 A：内容摘要相同的响应会以 `revisit` 记录保存指向首个响应的 `WARC-Refers-To`，减少重复存储；回放时自动跟随。
+
+**Q：`resource_depth` 应该选 1 还是 2？**
+A：选 1 得到页面直接依赖的稳定闭包（样式表与图片），预算最可预测；选 2 会继续展开 CSS 中的 `@import`/`url(...)`，补齐字体与背景图等间接依赖，但资源集合更大并占用 `max_pages`。无论选哪个，超出上限的引用都会以 `resource_depth_limit` 留在台账里，而不是静默丢失。
 
 **Q：核验失败如何定位？**
 A：`verify.json`/`verify.md` 给出文件名、记录序号与稳定错误码（如 `GZIP_TRUNCATED`、`BLOCK_DIGEST_MISMATCH`、`INDEX_ENTRY_MISSING`）。

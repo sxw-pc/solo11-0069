@@ -51,6 +51,20 @@ _SCHEMA = (
         issues INTEGER NOT NULL,
         detail TEXT NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS resource_refs (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        source_url TEXT NOT NULL,
+        raw_reference TEXT NOT NULL,
+        target TEXT,
+        kind TEXT NOT NULL,
+        resource_depth INTEGER NOT NULL,
+        outcome TEXT NOT NULL,
+        reason TEXT,
+        tag TEXT,
+        attribute TEXT,
+        duplicate INTEGER NOT NULL,
+        cycle INTEGER NOT NULL DEFAULT 0
+    )""",
 )
 
 
@@ -81,12 +95,14 @@ def write_run(
     rejected: list[dict[str, Any]],
     records: list[dict[str, Any]],
     checks: list[dict[str, Any]],
+    resource_refs: list[dict[str, Any]] | None = None,
 ) -> None:
     """写入一次完整运行；同一 run_id 重跑时先清理旧行，避免重复。"""
     connection = open_ledger(path)
     try:
         with connection:
-            for table in ("fetches", "rejected_targets", "records", "verify_results", "runs"):
+            for table in ("fetches", "rejected_targets", "records", "verify_results",
+                "resource_refs", "runs"):
                 connection.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
             connection.execute("INSERT INTO runs(run_id, timestamp, config_digest, status, summary_json) "
                 "VALUES (?, ?, ?, ?, ?)",
@@ -116,6 +132,18 @@ def write_run(
                 [(run_id, row["name"], row["status"], row["issues"], row["detail"])
                     for row in checks],
             )
+            if resource_refs:
+                connection.executemany(
+                    "INSERT INTO resource_refs(run_id,source_url,raw_reference,target,kind,"
+                    "resource_depth,outcome,reason,tag,attribute,duplicate,cycle) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    [(run_id, row["source_url"], row["raw_reference"], row.get("target"),
+                         row["kind"], row["resource_depth"], row["outcome"],
+                         row.get("reason"), row.get("tag"), row.get("attribute"),
+                         1 if row.get("duplicate") else 0,
+                         1 if row.get("cycle") else 0)
+                        for row in resource_refs],
+                )
     except sqlite3.Error as exc:
         raise LedgerError("LEDGER_WRITE_ERROR", f"cannot write ledger: {exc}") from exc
     finally:

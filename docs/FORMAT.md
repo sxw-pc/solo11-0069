@@ -61,7 +61,9 @@ urlkey timestamp url status mime digest offset length filename
 
 ## 报告与台账
 
-`report.json`、`verify.json` 使用固定键序和相对文件名，不含绝对路径、主机系统时间或随机值。`ledger.sqlite3` 使用 DELETE journal，包含 `runs`、`fetches`、`rejected_targets`、`records`、`verify_results` 五表；同一 `run_id` 重写会先清理旧行。
+`report.json`、`verify.json` 使用固定键序和相对文件名，不含绝对路径、主机系统时间或随机值。`ledger.sqlite3` 使用 DELETE journal，包含 `runs`、`fetches`、`rejected_targets`、`records`、`verify_results`、`resource_refs` 六表；同一 `run_id` 重写会先清理旧行。
+
+`resource_refs` 记录每条静态资源引用边：`source_url`（引用它的页面或 CSS）、`raw_reference`（原始 token）、`target`（规范化绝对 URL，不可解析时为 NULL）、`kind`（`stylesheet`/`image`/`srcset`/`css-import`/`css-url`/`redirect`）、`resource_depth`、`outcome`（`archived`/`skipped`/`duplicate`/`rejected`/`error`）、`reason`、`tag`/`attribute`、`duplicate` 与 `cycle`。报告 `crawl.resource_edges`、`crawl.resource_outcomes`、`crawl.resource_kinds` 与这些行一一对应；`resource_depth=0` 时全部为 0。归档本身不为引用边增加记录类型：同一目标只写 request + response/revisit 各一次。
 
 ## 兼容边界
 

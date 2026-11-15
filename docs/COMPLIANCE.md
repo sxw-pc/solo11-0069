@@ -9,7 +9,7 @@
 - 非回环目标立即拒绝，不发起 DNS 后的网络请求；该事件以稳定原因写入 `ledger.sqlite3` 的 `rejected_targets` 表，并在报告 `crawl.rejected_targets` 中计数。
 - 不存在“关闭白名单”“允许公网”“代理出口”的配置项或隐藏开关。修改代码绕过白名单不属于受支持用法。
 
-实现位置与留痕：`src/pagefreeze/policy.py` 的 `ALLOWED_HOSTS`、`is_loopback_target`、`ensure_allowed_url`、`validate_bind_host` 提供白名单判定；`fetch.py` 在打开连接前再次调用；`crawl.py` 将拒绝事件放入 `RejectedTarget`，`pipeline.py` 经 `ledger.write_run` 写入 `rejected_targets` 表并同步报告计数。
+实现位置与留痕：`src/pagefreeze/policy.py` 的 `ALLOWED_HOSTS`、`is_loopback_target`、`ensure_allowed_url`、`validate_bind_host` 提供白名单判定；`fetch.py` 在打开连接前再次调用；`crawl.py` 将拒绝事件放入 `RejectedTarget`，`pipeline.py` 经 `ledger.write_run` 写入 `rejected_targets` 表并同步报告计数。静态资源发现的外链（如 `link rel=stylesheet` 指向公网）在入队前经过同一 `is_loopback_target` 检查，并以 `kind`/`raw_reference` 标明引用类型与原始 token。
 
 ## 合成数据声明
 
@@ -33,7 +33,9 @@
 ## 请求与数据最小化
 
 - 请求记录仅保留方法、Host、固定 UA、Accept、Connection；**不记录** Cookie、Authorization、Set-Cookie 或其他凭据头。
-- 不执行 JavaScript、不加载归档页面中的外部资源；回放首页为本地生成的纯 HTML，无脚本、无外部图片或字体。
+- 不执行 JavaScript、不抓取 `<script src>`、不加载归档页面中的外部资源；CSS 只做文本级引用解析，不解释或执行任何样式逻辑。
+- 静态资源发现受 `resource_depth`、`max_pages`、robots 与回环白名单共同约束：`resource_depth=0` 完全关闭，未知格式或超限引用只留痕不抓取。
+- 回放首页为本地生成的纯 HTML，无脚本、无外部图片或字体。
 - 响应体超过配置上限即拒绝读取并放弃归档；不将超限内容写入磁盘。
 - 不回传任何数据到外部服务；工具没有遥测、更新检查或外发通道。
 

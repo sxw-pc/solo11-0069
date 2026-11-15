@@ -5,6 +5,7 @@ import base64
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 from ..util import gzip_compress
+from .resources import respond_resource
 
 
 @dataclass(frozen=True)
@@ -20,7 +21,7 @@ _CSS = ("body{font-family:system-ui,sans-serif;max-width:46rem;margin:2rem auto;
     "padding:0 1rem;color:#20242a;background:#f7f8fa}"
     "a{color:#175fa3}nav{display:flex;gap:1rem;flex-wrap:wrap}"
     ".card{border:1px solid #ccd2da;border-radius:.5rem;padding:1rem;margin:1rem 0}"
-    ".muted{color:#59636f}")
+    ".muted{color:#59636f}").encode("utf-8")
 _PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
     "+A8AAQUBAScY42YAAAAASUVORK5CYII=")
 _ROBOTS = "User-agent: *\nCrawl-delay: 0\nDisallow: /private/\n"
@@ -37,7 +38,10 @@ def _page(title: str, body: str) -> bytes:
     ).encode("utf-8")
 _ROOT = _page("封页台离线样例首页",
     "<h1>封页台样例站点</h1>"
-    "<p>全部内容均为本地合成，仅用于离线归档评测。</p><nav>"
+    "<p>全部内容均为本地合成，仅用于离线归档评测。</p>"
+    "<link rel=\"stylesheet\" href=\"/assets/site.css\">"
+    "<img src=\"/assets/dot.png\" alt=\"一像素样例\">"
+    "<nav>"
     "<a href=\"/list?page=1#part-a\">分页列表</a>"
     "<a href=\"/redirect/301\">两级重定向</a>"
     "<a href=\"/dup/a\">重复载荷 A</a>"
@@ -132,6 +136,11 @@ def respond(raw_target: str) -> MockResponse:
     parsed = urlsplit(raw_target)
     path = parsed.path or "/"
     query = parse_qs(parsed.query, keep_blank_values=True)
+    if path.startswith("/res/"):
+        resource = respond_resource(path)
+        if resource is not None:
+            content_type, body, route = resource
+            return _ok(content_type, body, route)
     if path == "/":
         return _ok("text/html; charset=utf-8", _ROOT, "root")
     if path == "/list":
@@ -178,7 +187,7 @@ def respond(raw_target: str) -> MockResponse:
             (("X-Mock-Route", "status-500"),),
         )
     if path == "/assets/site.css":
-        return _ok("text/css; charset=utf-8", _CSS.encode("utf-8"), "css")
+        return _ok("text/css; charset=utf-8", _CSS, "css")
     if path == "/assets/dot.png":
         return _ok("image/png", _PNG, "png")
     if path == "/robots.txt":

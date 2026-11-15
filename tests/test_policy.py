@@ -57,3 +57,27 @@ def test_robots_specific_agent_overrides_star() -> None:
     )
     assert rules.allowed("/public")
     assert not rules.allowed("/secret/page")
+
+
+def test_resource_reference_targets_use_the_same_policy_layer() -> None:
+    """资源发现只产生规范化 URL；回环判断与导航链接共用同一函数。"""
+    from pagefreeze.links import discover_css_resources, discover_html_resources
+    css = b'@import "../shared.woff2"; .a{background:url(/img/bg.png)}'
+    references = discover_css_resources(css, "http://127.0.0.1:18080/css/main.css", 2)
+    assert {item.target for item in references} == {
+        "http://127.0.0.1:18080/shared.woff2",
+        "http://127.0.0.1:18080/img/bg.png",
+    }
+    assert all(is_loopback_target(item.target) for item in references)
+    html = b'<img src="http://198.51.100.9/x.png"><img src="//203.0.113.7/y.png">'
+    external = discover_html_resources(html, "http://127.0.0.1:18080/", 1)
+    assert [item.target for item in external] == [
+        "http://198.51.100.9/x.png", "http://203.0.113.7/y.png"]
+    assert all(not is_loopback_target(item.target) for item in external)
+
+
+def test_normalize_url_fragment_and_base_resolution_for_resources() -> None:
+    assert normalize_url("../a.png#sprite", "http://127.0.0.1:18080/x/y.css") == \
+        "http://127.0.0.1:18080/a.png"
+    assert normalize_url("/a.png?w=1", "http://127.0.0.1:18080/x/y.css") == \
+        "http://127.0.0.1:18080/a.png?w=1"

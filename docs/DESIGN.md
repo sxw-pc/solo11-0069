@@ -13,7 +13,7 @@
 | 入口 | `__main__`、`cli` | argparse 子命令、稳定退出码与错误码、stdout 摘要 |
 | 配置 | `config` | 两文件 schema 校验、范围检查、路径逃逸阻断、配置摘要 |
 | 策略 | `policy` | URL 规范化、SURT urlkey、回环白名单、robots 解析 |
-| 抓取 | `frontier`、`ratelimit`、`fetch`、`links`、`crawl` | 有界 BFS、并发、限速、超时/体积/MIME 处理 |
+| 抓取 | `frontier`、`ratelimit`、`fetch`、`links`、`css`、`crawl`、`crawl_audit` | 有界 BFS、并发、限速、超时/体积/MIME 处理、资源发现与引用审计 |
 | 归档 | `warc`、`warc_build`、`store`、`archive_io` | 记录构造/解析、排序去重、分卷、容错读取 |
 | 索引 | `cdx` | 从记录生成、排序去重、稳定写读、lookup/window |
 | 核验 | `verify`、`verify_report` | 结构/截断/摘要/索引/revisit 交叉检查与报告 |
@@ -48,6 +48,19 @@ replay ◄─ cdx + archive_io（按 URL+时间戳定位单条记录）
 6. 4xx/5xx 仍作为可归档响应保留，不视为抓取器故障。
 7. 仅对 HTML 提取 `<a href>`，解析相对链接并规范化；非回环外链进入 `rejected`，在连接前拒绝并写入台账。
 8. 达到 `max_pages` 或 frontier 为空时停止；每个 URL 只归档一次。
+
+### 静态资源发现
+
+导航链接与资源引用是两条独立通道，共享同一套 URL 规范化、回环白名单、robots 与预算检查：
+
+- HTML 资源解析器（`links`）只识别 `link[rel~=stylesheet]` 的 href、`img`/`source` 的 `src`，以及 `srcset` 候选列表；`srcset` 按候选逗号切分，括号/引号内的逗号与 `data:` 内的逗号不切分，描述符（`1x`/`100w`）不会当作 URL。
+- CSS 解析器（`css`）是保守的文本扫描器：先屏蔽注释（保留字符串内的注释字样），再读取 `url(...)` 与 `@import`，处理引号、括号、转义与 `data:`；字符串里的 `url` 字样不产生引用。坏 token（未闭合字符串/括号）记一次 `skipped` 并从声明边界继续。
+- 用 `resource_depth` 选择策略：`0` 关闭、`1` 只抓 HTML 直连、`2+` 递归展开 CSS。HTML 直接引用记资源深度 1，CSS 内部引用逐层 +1；超过上限的边记为 `skipped`/`resource_depth_limit`。
+- CSS 内部引用以**该 CSS 自身 URL** 为基准，绝不回退到最初 HTML 页面。`@import` 环用祖先链判定，命中时记为 `skipped`/`import_cycle`，且不会再次请求同一资源。
+- 资源 URL 只入队一次；重复引用保留为 `duplicate` 边，因此“一个目标一次请求”和“所有来源可审计”同时成立。
+- 资源请求不增加页面导航深度，但计入 `max_pages`，因此资源发现不会突破预算。
+
+每条边的 `source_url`、原始 token、解析目标、类型、深度、`outcome`、`reason`、`duplicate`、`cycle` 汇总到 `CrawlResult.resources`，写入台账 `resource_refs` 表，并在报告中按类型与结果计数。归档仍按 `(urlkey, url)` 排序去重，所以资源发现不改变确定性来源。
 
 并发只影响抓取完成顺序。归档写入前按 `(urlkey, url)` 重新排序，因此线程调度不改变 WARC/CDX 字节。
 

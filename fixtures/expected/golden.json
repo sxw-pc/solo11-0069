@@ -12,10 +12,18 @@
   },
   "segments": 2,
   "index_entries": 16,
+  "resource_edges": 2,
+  "resource_outcomes": {
+    "archived": 2,
+    "duplicate": 0,
+    "error": 0,
+    "rejected": 0,
+    "skipped": 0
+  },
   "verify": "pass",
-  "index_sha256": "c55988d7c38af834c58e2c657dc5b7225a1ac66f1567b79cf78edaa3c44c840b",
+  "index_sha256": "682f964737c8e6cf75c60ca056a97efcbc19c444a1c83b0c21aa54afebc47645",
   "segment_sha256": {
-    "seg-00000.warc.gz": "0fac6e13831112fec1c2d7012447cf9646807feb3694c3e6e57afae882ec8e7a",
+    "seg-00000.warc.gz": "154849afa78c88ce799f967aa2a81e5af2b4a3e611f29300e533bc8a5510ae38",
     "seg-00001.warc.gz": "5747717fc6631844699921fa4cbd41d029443d05333aa2967a245be241a3b26a"
   }
 }

@@ -37,6 +37,8 @@ def build_golden() -> dict[str, object]:
             "skipped": result.crawl.skip_reasons(),
             "segments": len(write.segments),
             "index_entries": len(rows),
+            "resource_edges": len(result.crawl.resources),
+            "resource_outcomes": result.crawl.resource_outcomes(),
             "verify": result.verify.status,
             "index_sha256": sha256_file(result.paths.index_path),
             "segment_sha256": {path.name: sha256_file(path) for path in segments},

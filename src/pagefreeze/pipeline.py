@@ -122,6 +122,20 @@ def _finalize(
                 "issues": check.issue_count, "detail": check.detail,
             }
             for check in verify.checks],
+        resource_refs=[{
+                "source_url": ref.source_url,
+                "raw_reference": ref.raw,
+                "target": ref.target,
+                "kind": ref.kind,
+                "resource_depth": ref.depth,
+                "outcome": ref.outcome,
+                "reason": ref.reason,
+                "tag": ref.tag,
+                "attribute": ref.attribute,
+                "duplicate": ref.duplicate,
+                "cycle": ref.cycle,
+            }
+            for ref in crawl.resources],
     )
     write_reports(paths, summary)
     return PipelineResult(settings=settings,

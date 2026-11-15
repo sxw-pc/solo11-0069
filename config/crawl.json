@@ -15,5 +15,6 @@
     "image/png"
   ],
   "respect_robots": true,
-  "user_agent": "pagefreeze-demo/0.1 (local archive)"
+  "user_agent": "pagefreeze-demo/0.1 (local archive)",
+  "resource_depth": 2
 }

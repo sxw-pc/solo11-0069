@@ -40,6 +40,9 @@ def build_summary(
             "rejected_targets": len(crawl.rejected),
             "skipped": len(crawl.logs) - len(crawl.hits),
             "skip_reasons": crawl.skip_reasons(),
+            "resource_edges": len(crawl.resources),
+            "resource_outcomes": crawl.resource_outcomes(),
+            "resource_kinds": crawl.resource_kinds(),
         },
         "archive": {"segments": len(write.segments),
             "records": len(write.records),
@@ -91,6 +94,30 @@ def write_reports(paths: OutputPaths, summary: dict[str, Any]) -> None:
     if reasons:
         lines.extend(f"| `{name}` | {count} |" for name, count in reasons.items())
     else:
+        lines.append("| 无 | 0 |")
+    lines.extend([
+            "",
+            "## 静态资源发现",
+            "",
+            f"- 引用边：{crawl.get('resource_edges', 0)}",
+            "",
+            "| 引用类型 | 数量 |",
+            "| --- | --- |",
+        ])
+    kinds = crawl.get("resource_kinds") or {}
+    for name, count in kinds.items():
+        lines.append(f"| `{name}` | {count} |")
+    if not kinds:
+        lines.append("| 无 | 0 |")
+    lines.extend([
+            "",
+            "| 引用结果 | 数量 |",
+            "| --- | --- |",
+        ])
+    outcomes = crawl.get("resource_outcomes") or {}
+    for name, count in outcomes.items():
+        lines.append(f"| `{name}` | {count} |")
+    if not outcomes:
         lines.append("| 无 | 0 |")
     lines.extend([
             "",
