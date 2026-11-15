@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from .config import CrawlConfig
 from .errors import BodyTooLarge, FetchError, FetchTimeout, PolicyError
 from .httpmsg import header_value, mime_type
-from .policy import ensure_allowed_url
-from .ratelimit import RateLimiter
+from .policy import ensure_allowed_url, origin_of
+from .ratelimit import OriginRegistry, RateLimiter
 
 _LOGGER = logging.getLogger(__name__)
 _HTTP_VERSIONS = {9: "HTTP/0.9", 10: "HTTP/1.0", 11: "HTTP/1.1", 20: "HTTP/2"}
@@ -109,13 +109,25 @@ def _timeout_error(url: str, detail: object) -> FetchTimeout:
     return FetchTimeout("FETCH_TIMEOUT", f"timed out fetching {url}: {detail}")
 
 
-def fetch_once(url: str, config: CrawlConfig, limiter: RateLimiter) -> FetchResult:
-    """抓取一条已规范化 URL；HTTP 4xx/5xx 作为正常响应返回。"""
+def fetch_once(
+    url: str,
+    config: CrawlConfig,
+    limiter: RateLimiter | OriginRegistry | None = None,
+) -> FetchResult:
+    """抓取一条已规范化 URL；HTTP 4xx/5xx 作为正常响应返回。
+
+    限速等待由调度线程在派发前完成（见 ``crawl.CrawlEngine``）；这里保留
+    limiter 参数仅为兼容直接调用，传入 :class:`OriginRegistry` 时按最终
+    请求 origin 取独立等待槽。
+    """
     try:
         target = ensure_allowed_url(url)
     except PolicyError:
         raise
-    limiter.wait()
+    if isinstance(limiter, OriginRegistry):
+        limiter.get(origin_of(target)).wait()
+    elif limiter is not None:
+        limiter.wait()
     request = urllib.request.Request(target,
         method="GET",
         headers={"User-Agent": config.user_agent,

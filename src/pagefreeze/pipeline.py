@@ -123,7 +123,7 @@ def _finalize(
             }
             for check in verify.checks],
     )
-    write_reports(paths, summary)
+    write_reports(paths, summary, live_crawl=crawl)
     return PipelineResult(settings=settings,
         paths=paths,
         now=now,

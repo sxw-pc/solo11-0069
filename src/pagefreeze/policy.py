@@ -90,8 +90,14 @@ def validate_bind_host(host: str) -> str:
 
 @dataclass(frozen=True)
 class RobotsRules:
-    """最小 robots 规则集：按最长匹配选择，Allow 与 Disallow 等长时 Allow 胜。"""
+    """最小 robots 规则集：按最长匹配选择，Allow 与 Disallow 等长时 Allow 胜。
+
+    ``crawl_delay_seconds`` 为所选 user-agent 组中解析出的 Crawl-delay；
+    无有效声明时为 None。``warnings`` 保留解析期的忽略/冲突说明。
+    """
     patterns: tuple[tuple[bool, str], ...]
+    crawl_delay_seconds: float | None = None
+    warnings: tuple[str, ...] = ()
 
     def allowed(self, path_and_query: str) -> bool:
         """返回路径是否允许抓取；无规则时一律允许。"""
@@ -121,18 +127,39 @@ def _agent_matches(agent: str, user_agent: str) -> bool:
     return value == "*" or value in user_agent.lower()
 
 
+def _parse_crawl_delay(content: str) -> tuple[float | None, str | None]:
+    """解析单条 Crawl-delay：仅接受非负整数秒；小数与非法值明确拒绝。"""
+    token = content.strip()
+    if not token:
+        return None, "crawl_delay_empty"
+    if token.lstrip("-").isdigit():
+        if token.startswith("-"):
+            return None, "crawl_delay_negative"
+        return float(int(token)), None
+    if any(char in token for char in (".", "e", "E")):
+        return None, "crawl_delay_decimal_unsupported"
+    return None, "crawl_delay_invalid"
+
+
 def parse_robots(text: str, user_agent: str) -> RobotsRules:
-    """解析 robots.txt 的 User-agent / Allow / Disallow 子集。"""
-    groups: list[tuple[list[str], list[tuple[bool, str]]]] = []
+    """解析 robots.txt 的 User-agent / Allow / Disallow / Crawl-delay 子集。
+
+    非法、负数或不支持的小数 Crawl-delay 产生 warning 并被忽略；同一组内
+    重复且取值冲突的 Crawl-delay 产生 warning，最后一条有效值生效。
+    坏规则只影响该字段，绝不破坏同文件中的路径判定。
+    """
+    groups: list[tuple[list[str], list[tuple[bool, str]], list[float], list[str]]] = []
     agents: list[str] = []
     rules: list[tuple[bool, str]] = []
+    delays: list[float] = []
+    group_warnings: list[str] = []
 
     def flush() -> None:
-        nonlocal agents, rules
+        nonlocal agents, rules, delays, group_warnings
         if agents:
-            groups.append((agents, rules))
-        agents, rules = [], []
-    for line in text.splitlines():
+            groups.append((agents, rules, delays, group_warnings))
+        agents, rules, delays, group_warnings = [], [], [], []
+    for line_number, line in enumerate(text.splitlines(), start=1):
         clean = line.split("#", 1)[0].strip()
         if not clean or ":" not in clean:
             continue
@@ -140,27 +167,47 @@ def parse_robots(text: str, user_agent: str) -> RobotsRules:
         name = field.strip().lower()
         content = value.strip()
         if name == "user-agent":
-            if rules:
+            if rules or delays:
                 flush()
             agents.append(content)
         elif name in ("allow", "disallow") and agents:
             rules.append((name == "allow", content))
+        elif name == "crawl-delay" and agents:
+            parsed, warning = _parse_crawl_delay(content)
+            if warning is not None:
+                group_warnings.append(f"{warning}:line{line_number}")
+                continue
+            assert parsed is not None
+            if delays and parsed != delays[-1]:
+                group_warnings.append(f"crawl_delay_conflict:line{line_number}")
+            delays.append(parsed)
     flush()
     selected: list[tuple[bool, str]] = []
-    for group_agents, group_rules in groups:
-        if any(_agent_matches(agent, user_agent) for agent in group_agents if agent != "*"):
-            selected.extend(group_rules)
-    if not selected:
-        for group_agents, group_rules in groups:
-            if any(agent == "*" for agent in group_agents):
-                selected.extend(group_rules)
-    return RobotsRules(tuple(selected))
+    selected_delays: list[float] = []
+    warnings: list[str] = []
+    matched_groups = [group for group in groups
+        if any(_agent_matches(agent, user_agent) for agent in group[0] if agent != "*")]
+    if not matched_groups:
+        matched_groups = [group for group in groups
+            if any(agent == "*" for agent in group[0])]
+    for _, group_rules, group_delays, group_warnings in matched_groups:
+        selected.extend(group_rules)
+        selected_delays.extend(group_delays)
+        warnings.extend(group_warnings)
+    crawl_delay = selected_delays[-1] if selected_delays else None
+    return RobotsRules(tuple(selected), crawl_delay, tuple(warnings))
 
 
 def robots_url_for(url: str) -> str:
     """返回站点级 robots.txt 地址。"""
     parsed = urlsplit(normalize_url(url))
     return f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+
+
+def origin_of(url: str) -> str:
+    """返回规范化 URL 的站点级 origin（scheme://host[:port]）。"""
+    parsed = urlsplit(normalize_url(url))
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def path_and_query(url: str) -> str:

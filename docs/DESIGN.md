@@ -13,7 +13,7 @@
 | 入口 | `__main__`、`cli` | argparse 子命令、稳定退出码与错误码、stdout 摘要 |
 | 配置 | `config` | 两文件 schema 校验、范围检查、路径逃逸阻断、配置摘要 |
 | 策略 | `policy` | URL 规范化、SURT urlkey、回环白名单、robots 解析 |
-| 抓取 | `frontier`、`ratelimit`、`fetch`、`links`、`crawl` | 有界 BFS、并发、限速、超时/体积/MIME 处理 |
+| 抓取 | `clock`、`frontier`、`ratelimit`、`fetch`、`links`、`crawl` | 有界 BFS、按 origin 限速、并发、超时/体积/MIME 处理 |
 | 归档 | `warc`、`warc_build`、`store`、`archive_io` | 记录构造/解析、排序去重、分卷、容错读取 |
 | 索引 | `cdx` | 从记录生成、排序去重、稳定写读、lookup/window |
 | 核验 | `verify`、`verify_report` | 结构/截断/摘要/索引/revisit 交叉检查与报告 |
@@ -40,16 +40,23 @@ replay ◄─ cdx + archive_io（按 URL+时间戳定位单条记录）
 
 ## 抓取状态机
 
-1. 校验种子为回环 HTTP URL；若有 `respect_robots`，先预取每个种子的 `/robots.txt`。
-2. 种子按顺序进入 FIFO frontier，深度 0；记录已处理集合，避免重复。
-3. 工作线程取任务，`RateLimiter` 在进程级按最小间隔串行发放请求许可。
-4. `fetch` 在**连接前**再次检查 DNS/主机文本是否属于回环白名单；使用不自动跟随重定向的 opener，逐跳人工处理，且每一跳都重新校验。
-5. 响应按上限流式读取；超限关闭连接并记为 `body_too_large`；超时记为 `timeout`；MIME 不在白名单记为 `mime_skipped`；robots 禁止记为 `robots_disallowed`。
+1. 校验种子为回环 HTTP URL；首次接触某个 origin 时先预取该 origin 的 `/robots.txt`，解析 Allow/Disallow 与所选 user-agent 组的 Crawl-delay 后才调度该 origin 的页面，不用首个种子的规则覆盖其它域名。
+2. 种子按顺序进入该 origin 的 FIFO frontier，深度 0；全局已处理集合避免重复。
+3. 调度线程为每个 origin 维护独立限速器，按各 origin 的 next-allowed-at 只派发已到期任务（方案 B）：同 origin 相邻请求起始时间至少间隔 `max(request_interval_ms, robots Crawl-delay)`，不同 origin 的等待槽互不占用；长 delay 站点等待期间线程继续服务其它 origin。
+4. `fetch` 在**连接前**再次检查 DNS/主机文本是否属于回环白名单；使用不自动跟随重定向的 opener，逐跳人工处理，每一跳都重新过白名单，并按最终请求 origin 的 robots 与限速规则执行。
+5. 响应按上限流式读取；超限关闭连接并记为 `body_too_large`；超时记为 `timeout`；MIME 不在白名单记为 `mime_skipped`；robots 禁止记为 `robots_disallowed`，不建立连接。
 6. 4xx/5xx 仍作为可归档响应保留，不视为抓取器故障。
 7. 仅对 HTML 提取 `<a href>`，解析相对链接并规范化；非回环外链进入 `rejected`，在连接前拒绝并写入台账。
-8. 达到 `max_pages` 或 frontier 为空时停止；每个 URL 只归档一次。
+8. 达到 `max_pages`（跨 origin 共享预算）或全部 frontier 为空时停止；每个 URL 只归档一次。
 
-并发只影响抓取完成顺序。归档写入前按 `(urlkey, url)` 重新排序，因此线程调度不改变 WARC/CDX 字节。
+并发只影响抓取完成顺序。归档写入前按 `(urlkey, url)` 重新排序，因此线程调度不改变 WARC/CDX 字节。限速等待由调度线程在派发前完成，工作线程只做网络 I/O；注入 `VirtualClock` 后可在零墙钟耗时下验证任意长的 Crawl-delay。
+
+### Crawl-delay 的解析与容错
+
+- 仅接受所选 user-agent 匹配组中的非负整数秒；小数（含科学计数法）记 `crawl_delay_decimal_unsupported`，负数记 `crawl_delay_negative`，其它非法 token 记 `crawl_delay_invalid`，空值记 `crawl_delay_empty`，均忽略该条并保留告警。
+- 同组重复且取值冲突记 `crawl_delay_conflict`，最后一条有效值生效；重复同值不告警。
+- 坏规则只影响 Crawl-delay 字段，绝不破坏同文件的 Allow/Disallow 判定，也不影响其它 origin 的采集。
+- robots.txt 抓取失败或非 200 时对该 origin 失败放行（无额外规则），错误仍进入 crawl log。
 
 ## 确定性的来源
 

@@ -40,6 +40,7 @@ def build_summary(
             "rejected_targets": len(crawl.rejected),
             "skipped": len(crawl.logs) - len(crawl.hits),
             "skip_reasons": crawl.skip_reasons(),
+            "origins": crawl.origin_summary(),
         },
         "archive": {"segments": len(write.segments),
             "records": len(write.records),
@@ -64,12 +65,18 @@ def build_summary(
     }
 
 
-def write_reports(paths: OutputPaths, summary: dict[str, Any]) -> None:
-    """写出 report.json 与 report.md，不包含绝对路径或系统时间。"""
+def write_reports(paths: OutputPaths, summary: dict[str, Any],
+                  live_crawl: CrawlResult | None = None) -> None:
+    """写出 report.json 与 report.md，不包含绝对路径或系统时间。
+
+    ``live_crawl`` 提供非确定性的实际请求起始时间，仅写入 Markdown；
+    从台账重建（无 live_crawl）时该列显示“见台账”。
+    """
     write_text(paths.report_json, stable_json(summary))
     crawl = summary["crawl"]
     archive = summary["archive"]
     verify = summary["verify"]
+    live_stats = live_crawl.origin_stats if live_crawl is not None else {}
     lines = ["# 封页台归档报告",
         "",
         f"- 运行 ID：`{summary['run_id']}`",
@@ -92,6 +99,30 @@ def write_reports(paths: OutputPaths, summary: dict[str, Any]) -> None:
         lines.extend(f"| `{name}` | {count} |" for name, count in reasons.items())
     else:
         lines.append("| 无 | 0 |")
+    lines.extend([
+            "",
+            "### 按 origin 的限速与 robots 台账",
+            "",
+            "| origin | 有效间隔(ms) | robots 延迟(ms) | 请求数 | 起始时间(相对秒) | robots 跳过 | 解析告警 |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ])
+    origins = crawl["origins"]
+    if origins:
+        for origin in origins:
+            stats = live_stats.get(origin["origin"])
+            if stats is not None:
+                starts = ", ".join(f"{value:g}" for value in stats.request_starts) or "无"
+            else:
+                starts = "见台账"
+            delay = origin["robots_delay_ms"]
+            delay_text = "无" if delay is None else str(delay)
+            warnings = ", ".join(origin["robots_warnings"]) or "无"
+            lines.append(
+                f"| {origin['origin']} | {origin['effective_interval_ms']} | "
+                f"{delay_text} | {origin['request_count']} | {starts} | "
+                f"{origin['robots_skipped']} | {warnings} |")
+    else:
+        lines.append("| 无 | 0 | 无 | 0 | 无 | 0 | 无 |")
     lines.extend([
             "",
             "## 归档",
