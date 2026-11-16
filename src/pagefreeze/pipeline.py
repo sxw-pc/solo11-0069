@@ -116,6 +116,9 @@ def _finalize(
             for log in crawl.logs],
         rejected=[{"source_url": item.source_url, "target": item.target, "reason": item.reason}
             for item in crawl.rejected],
+        link_skips=[{"url": item.url, "urlkey": item.urlkey, "depth": item.depth,
+                "reason": item.reason, "detail": item.detail}
+            for item in crawl.link_skips],
         records=_record_rows(write),
         checks=[{
                 "name": check.name, "status": check.status,

@@ -1,4 +1,4 @@
-"""离线回放服务：命中断言、四类错误分支与索引损坏。"""
+"""离线回放服务：命中断言、四类错误分支、索引损坏与 gzip 原始字节。"""
 from __future__ import annotations
 
 import http.client
@@ -6,12 +6,17 @@ import json
 import shutil
 import threading
 import urllib.parse
+import zlib
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Iterator
+from conftest import FIXED_NOW, ROOT
 from pagefreeze.cdx import read_index
-from pagefreeze.pipeline import PipelineResult
+from pagefreeze.config import load_settings
+from pagefreeze.pipeline import PipelineResult, execute_crawl
 from pagefreeze.replay import ReplayServer
+from pagefreeze.util import parse_clock
 
 FIXED_TS = "20240115000000"
 BASE = "http://127.0.0.1:18080"
@@ -94,3 +99,24 @@ def test_corrupt_index_returns_500(demo_result: PipelineResult, tmp_path: Path) 
         status, _, body = _get(server.port, _replay_path(BASE + "/zh/", FIXED_TS))
     assert status == 500
     assert json.loads(body)["error"]["code"] == "REPLAY_INDEX_ERROR"
+
+
+def test_corrupt_gzip_page_is_still_replayable(gzip_site: str, tmp_path: Path) -> None:
+    """链接发现跳过不删除归档：坏 gzip 页仍以原始压缩字节回放。"""
+    base = load_settings(ROOT / "config")
+    crawl = replace(base.crawl,
+        seed_urls=(gzip_site + "/gz/bad-crc.html",),
+        respect_robots=False,
+        max_pages=2,
+    )
+    result = execute_crawl(replace(base, crawl=crawl), tmp_path, parse_clock(FIXED_NOW))
+    url = gzip_site + "/gz/bad-crc.html"
+    row = next(item for item in read_index(result.paths.index_path) if item.url == url)
+    with running_server(result.paths.archive_dir, result.paths.index_path) as server:
+        status, headers, body = _get(server.port, _replay_path(url, FIXED_NOW))
+    assert status == 200
+    assert headers["content-encoding"] == "gzip"
+    assert body.startswith(b"\x1f\x8b")
+    assert b"/guide" not in body
+    assert zlib.decompress(body, 16 + zlib.MAX_WBITS).startswith(b"<!doctype html>")
+    assert headers["x-archive-digest"] == row.digest

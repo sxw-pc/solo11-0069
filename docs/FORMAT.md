@@ -38,6 +38,12 @@ Content-Length: N\r\n
 
 每个抓取命中固定产生 request +（response 或 revisit）。warcinfo 只出现一次，位于整个 WARC 序列首条。
 
+`Content-Encoding: gzip` 的响应体按线上压缩字节写入 response 记录，`Content-Encoding` 头原样保留；`WARC-Payload-Digest` 是对**压缩字节**的摘要，因此归档与回放都不依赖解码结果。链接发现使用解压后的完整文档，但不会改写记录。
+
+## 链接发现跳过
+
+已归档的 HTML 若因 gzip 实体不完整而放弃本轮链接发现，不新增 WARC 记录，也不把响应标成失败；跳过事件写入台账 `link_discovery_skips`，并在报告 `crawl.link_discovery_skipped` / `crawl.link_skip_reasons` 中单独计数。`fetches` 表中该响应仍是 `archived`，`reason` 为稳定的 `link_discovery_skip`。detail 取值：`GZIP_TRUNCATED`、`GZIP_CRC_MISMATCH`、`GZIP_ISIZE_MISMATCH`、`GZIP_INVALID`、`GZIP_TOO_LARGE`。按“完整文档才扩展”语义，一个坏实体贡献零个链接。
+
 ## 去重与 revisit
 
 写入前按 `(urlkey, url)` 排序。对每条响应 body 计算摘要，摘要首次出现时写 response；后续相同摘要写 revisit，`WARC-Refers-To` 指向首条 response 的 `WARC-Record-ID`，`WARC-Payload-Digest` 与目标一致。回放读取 revisit 时会解析目标记录并返回其响应体。

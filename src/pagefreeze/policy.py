@@ -3,11 +3,23 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 from .errors import PolicyError
 
 ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+_NON_ASCII = re.compile(r"[^\x00-\x7f]+")
+
+
+def _ascii_url_part(value: str) -> str:
+    """把 IRI 中的非 ASCII 片段编码为 UTF-8 百分号形式。
+
+    仅处理非 ASCII 字符，ASCII 部分（包括已有的 %XX 与空格）保持原样，
+    因此不改变既有规范化结果，只让中文等相对链接成为可请求的 URI。
+    """
+    if value.isascii():
+        return value
+    return _NON_ASCII.sub(lambda match: quote(match.group(0), safe=""), value)
 
 
 def normalize_url(url: str, base: str | None = None) -> str:
@@ -27,6 +39,11 @@ def normalize_url(url: str, base: str | None = None) -> str:
     if not host:
         raise PolicyError("URL_INVALID", f"URL has no host: {url}")
     host = host.lower().rstrip(".")
+    if not host.isascii():
+        try:
+            host = host.encode("idna").decode("ascii")
+        except UnicodeError as exc:
+            raise PolicyError("URL_INVALID", f"URL has no usable host: {url}") from exc
     if port is not None and port == _DEFAULT_PORTS[scheme]:
         port = None
     if ":" in host:
@@ -36,7 +53,9 @@ def normalize_url(url: str, base: str | None = None) -> str:
     path = parsed.path or "/"
     if not path.startswith("/"):
         path = "/" + path
-    return urlunsplit((scheme, netloc, path, parsed.query, ""))
+    path = _ascii_url_part(path)
+    query = _ascii_url_part(parsed.query)
+    return urlunsplit((scheme, netloc, path, query, ""))
 
 
 def urlkey(url: str) -> str:

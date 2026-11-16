@@ -44,6 +44,14 @@ _SCHEMA = (
         length INTEGER NOT NULL,
         digest TEXT NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS link_discovery_skips (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        url TEXT NOT NULL,
+        urlkey TEXT NOT NULL,
+        depth INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        detail TEXT NOT NULL
+    )""",
     """CREATE TABLE IF NOT EXISTS verify_results (id INTEGER PRIMARY KEY AUTOINCREMENT,
         run_id TEXT NOT NULL,
         check_name TEXT NOT NULL,
@@ -81,12 +89,14 @@ def write_run(
     rejected: list[dict[str, Any]],
     records: list[dict[str, Any]],
     checks: list[dict[str, Any]],
+    link_skips: list[dict[str, Any]] | None = None,
 ) -> None:
     """写入一次完整运行；同一 run_id 重跑时先清理旧行，避免重复。"""
     connection = open_ledger(path)
     try:
         with connection:
-            for table in ("fetches", "rejected_targets", "records", "verify_results", "runs"):
+            for table in ("fetches", "rejected_targets", "link_discovery_skips",
+                    "records", "verify_results", "runs"):
                 connection.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
             connection.execute("INSERT INTO runs(run_id, timestamp, config_digest, status, summary_json) "
                 "VALUES (?, ?, ?, ?, ?)",
@@ -102,6 +112,12 @@ def write_run(
             connection.executemany(
                 "INSERT INTO rejected_targets(run_id,source_url,target,reason) VALUES (?,?,?,?)",
                 [(run_id, row["source_url"], row["target"], row["reason"]) for row in rejected],
+            )
+            connection.executemany(
+                "INSERT INTO link_discovery_skips(run_id,url,urlkey,depth,reason,detail) "
+                "VALUES (?,?,?,?,?,?)",
+                [(run_id, row["url"], row["urlkey"], row["depth"], row["reason"], row["detail"])
+                    for row in (link_skips or [])],
             )
             connection.executemany(
                 "INSERT INTO records(run_id,record_id,type,url,urlkey,timestamp,filename,"

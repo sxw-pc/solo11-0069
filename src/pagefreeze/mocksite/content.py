@@ -5,6 +5,7 @@ import base64
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 from ..util import gzip_compress
+from .gzip_fixtures import respond_gzip
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,15 @@ def respond(raw_target: str) -> MockResponse:
     parsed = urlsplit(raw_target)
     path = parsed.path or "/"
     query = parse_qs(parsed.query, keep_blank_values=True)
+    fixture = respond_gzip(path)
+    if fixture is not None:
+        content_type, body, route, extra = fixture
+        return MockResponse(200,
+            "OK",
+            content_type,
+            body,
+            (("X-Mock-Route", route), *extra),
+        )
     if path == "/":
         return _ok("text/html; charset=utf-8", _ROOT, "root")
     if path == "/list":

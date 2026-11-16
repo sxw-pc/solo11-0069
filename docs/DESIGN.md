@@ -47,7 +47,9 @@ replay ◄─ cdx + archive_io（按 URL+时间戳定位单条记录）
 5. 响应按上限流式读取；超限关闭连接并记为 `body_too_large`；超时记为 `timeout`；MIME 不在白名单记为 `mime_skipped`；robots 禁止记为 `robots_disallowed`。
 6. 4xx/5xx 仍作为可归档响应保留，不视为抓取器故障。
 7. 仅对 HTML 提取 `<a href>`，解析相对链接并规范化；非回环外链进入 `rejected`，在连接前拒绝并写入台账。
-8. 达到 `max_pages` 或 frontier 为空时停止；每个 URL 只归档一次。
+8. `Content-Encoding: gzip` 的 HTML 先做有界解码再提取链接：独立解压上限 `MAX_DECODED_BYTES`（1 MiB）只约束内存缓冲，与 `max_body_bytes` 无关。
+9. 链接发现采用**完整文档才扩展**（路线 A）：href 先整批暂存；任一 gzip 成员截断、CRC/ISIZE 校验失败、尾随非成员字节或解压超限时，该响应贡献**零个**链接，并记一条 `link_discovery_skip`（detail 为 `GZIP_TRUNCATED` / `GZIP_CRC_MISMATCH` / `GZIP_ISIZE_MISMATCH` / `GZIP_INVALID` / `GZIP_TOO_LARGE`）。原始压缩响应照常归档与回放；发现跳过不计为抓取失败，也不消耗 `max_pages`。
+10. 达到 `max_pages` 或 frontier 为空时停止；每个 URL 只归档一次。
 
 并发只影响抓取完成顺序。归档写入前按 `(urlkey, url)` 重新排序，因此线程调度不改变 WARC/CDX 字节。
 
@@ -80,5 +82,6 @@ replay ◄─ cdx + archive_io（按 URL+时间戳定位单条记录）
 
 - 使用全量内存记录换取简单、可核验的确定性；未做流式大归档。
 - gzip 每卷一个成员，牺牲随机读性能换取可移植与可复现。
+- gzip 链接发现选择“完整文档才扩展”而不是“已验证前缀可扩展”：归档审计要求链接集合来自完整验证的实体，损坏位置不应决定后续站点覆盖；代价是坏实体所在页面本轮不扩展，修复来源后重跑即可补全。
 - 只实现 HTTP GET 与 robots 的常见子集，不实现完整 RFC 语义。
 - 数据库仅作运行台账，不作为归档主数据或增量合并依据。

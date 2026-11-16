@@ -1,13 +1,18 @@
-"""集成测试：有界抓取、场景覆盖、台账、golden 与确定性。"""
+"""集成测试：有界抓取、场景覆盖、gzip 链接、台账、golden 与确定性。"""
 from __future__ import annotations
 
 import json
 import sqlite3
 import zlib
+from dataclasses import replace
 from pathlib import Path
 from pagefreeze.cdx import read_index
 from pagefreeze.config import load_settings
-from pagefreeze.pipeline import PipelineResult, execute_demo
+from pagefreeze.crawl import LINK_DISCOVERY_SKIP, run_crawl
+from pagefreeze.gzipbody import MAX_DECODED_BYTES
+from pagefreeze.httpmsg import header_value, parse_response
+from pagefreeze.mocksite.gzip_fixtures import oversize_body
+from pagefreeze.pipeline import PipelineResult, execute_crawl, execute_demo
 from pagefreeze.digest import sha256_file
 from pagefreeze.util import parse_clock
 from conftest import FIXED_NOW, ROOT
@@ -95,3 +100,91 @@ def test_golden_summary(demo_result: PipelineResult) -> None:
     assert golden["index_sha256"] == sha256_file(demo_result.paths.index_path)
     for name, digest in golden["segment_sha256"].items():
         assert digest == sha256_file(demo_result.paths.archive_dir / name)
+
+
+def _gzip_settings(site: str, path: str, *, max_pages: int = 8, max_depth: int = 2,
+    seeds: tuple[str, ...] = ()):
+    base = load_settings(ROOT / "config")
+    crawl = replace(base.crawl,
+        seed_urls=(site + path, *seeds),
+        max_pages=max_pages,
+        max_depth=max_depth,
+        respect_robots=False,
+    )
+    return replace(base, crawl=crawl)
+
+
+def _hit_urls(value) -> set[str]:
+    crawl = value.crawl if isinstance(value, PipelineResult) else value
+    return {hit.url for hit in crawl.hits}
+
+
+def test_complete_gzip_page_discovers_all_links_in_order(gzip_site: str, tmp_path: Path
+) -> None:
+    result = execute_crawl(_gzip_settings(gzip_site, "/gz/complete.html"), tmp_path,
+        parse_clock(FIXED_NOW))
+    urls = _hit_urls(result)
+    assert {gzip_site + "/guide", gzip_site + "/appendix"} <= urls
+    assert gzip_site + "/gz/%E4%B8%AD%E6%96%87/%E9%A1%B5%E9%9D%A2.html" in urls
+    assert result.crawl.link_skips == []
+    # 同一 href 出现两次（含 fragment）只入队并归档一次。
+    assert sum(1 for hit in result.crawl.hits if hit.url == gzip_site + "/guide") == 1
+    assert result.verify.status == "pass"
+
+
+def test_corrupt_gzip_contributes_zero_links_but_stays_replayable(
+    gzip_site: str, tmp_path: Path
+) -> None:
+    url = gzip_site + "/gz/bad-crc.html"
+    result = execute_crawl(_gzip_settings(gzip_site, "/gz/bad-crc.html"), tmp_path,
+        parse_clock(FIXED_NOW))
+    assert _hit_urls(result) == {url}
+    assert [skip.detail for skip in result.crawl.link_skips] == ["GZIP_CRC_MISMATCH"]
+    assert result.crawl.link_skips[0].reason == LINK_DISCOVERY_SKIP
+    assert result.crawl.skipped == 0
+    rows = read_index(result.paths.index_path)
+    row = next(item for item in rows if item.url == url)
+    raw = zlib.decompress((result.paths.archive_dir / row.filename).read_bytes(),
+        16 + zlib.MAX_WBITS)
+    from pagefreeze.warc import parse_records
+    record = parse_records(raw[row.offset:row.offset + row.length])[0]
+    message = parse_response(record.block)
+    assert row.status == 200
+    assert header_value(message.headers, "Content-Encoding") == "gzip"
+    assert message.body.startswith(b"\x1f\x8b")
+    assert b"/guide" not in message.body
+    assert result.verify.status == "pass"
+
+
+def test_truncated_and_oversized_gzip_are_skipped_whole(gzip_site: str) -> None:
+    for path, detail in (("/gz/truncated.html", "GZIP_TRUNCATED"),
+                         ("/gz/bad-isize.html", "GZIP_ISIZE_MISMATCH"),
+                         ("/gz/oversize.html", "GZIP_TOO_LARGE")):
+        result = run_crawl(_gzip_settings(gzip_site, path).crawl)
+        assert _hit_urls(result) == {gzip_site + path}
+        assert [skip.detail for skip in result.link_skips] == [detail]
+        assert result.skipped == 0
+    assert len(oversize_body()) < load_settings(ROOT / "config").crawl.max_body_bytes
+    assert MAX_DECODED_BYTES == 1024 * 1024
+
+
+def test_non_html_gzip_and_plain_html_are_unchanged(gzip_site: str) -> None:
+    css = run_crawl(_gzip_settings(gzip_site, "/gz/style.css", max_depth=1).crawl)
+    assert _hit_urls(css) == {gzip_site + "/gz/style.css"}
+    assert css.link_skips == []
+    plain = run_crawl(_gzip_settings(gzip_site, "/gz/plain.html").crawl)
+    assert plain.link_skips == []
+    assert {gzip_site + "/guide", gzip_site + "/appendix"} <= _hit_urls(plain)
+
+
+def test_corrupt_prefix_does_not_consume_page_budget(gzip_site: str) -> None:
+    """坏 gzip 不把前缀链接放进 frontier，剩余预算留给正常站点项。"""
+    settings = _gzip_settings(gzip_site, "/gz/bad-crc.html", max_pages=3,
+        seeds=(gzip_site + "/gz/after.html",))
+    settings = replace(settings, crawl=replace(settings.crawl, max_concurrency=1))
+    crawl = run_crawl(settings.crawl)
+    urls = [log.url for log in crawl.logs]
+    assert urls == [gzip_site + "/gz/bad-crc.html", gzip_site + "/gz/after.html"]
+    assert _hit_urls(crawl) == set(urls)
+    assert crawl.skipped == 0
+    assert all("/guide" not in url for url in urls)

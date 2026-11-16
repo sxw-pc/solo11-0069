@@ -38,8 +38,11 @@ def build_summary(
             "unique_urls": len(crawl.logs),
             "bytes": crawl.bytes,
             "rejected_targets": len(crawl.rejected),
-            "skipped": len(crawl.logs) - len(crawl.hits),
+            "skipped": crawl.skipped,
             "skip_reasons": crawl.skip_reasons(),
+            "fetch_skip_reasons": crawl.fetch_skip_reasons(),
+            "link_discovery_skipped": len(crawl.link_skips),
+            "link_skip_reasons": crawl.link_skip_reasons(),
         },
         "archive": {"segments": len(write.segments),
             "records": len(write.records),
@@ -82,6 +85,7 @@ def write_reports(paths: OutputPaths, summary: dict[str, Any]) -> None:
         f"- 归档：{crawl['archived']}",
         f"- 回环外拒绝：{crawl['rejected_targets']}",
         f"- 跳过或失败：{crawl['skipped']}",
+        f"- 链接发现跳过（已归档但不扩展）：{crawl['link_discovery_skipped']}",
         f"- 响应体字节：{crawl['bytes']}",
         "",
         "| 跳过原因 | 次数 |",
@@ -90,6 +94,16 @@ def write_reports(paths: OutputPaths, summary: dict[str, Any]) -> None:
     reasons = crawl["skip_reasons"]
     if reasons:
         lines.extend(f"| `{name}` | {count} |" for name, count in reasons.items())
+    else:
+        lines.append("| 无 | 0 |")
+    lines.extend([
+            "",
+            "| 链接发现跳过原因 | 次数 |",
+            "| --- | --- |",
+        ])
+    link_reasons = crawl["link_skip_reasons"]
+    if link_reasons:
+        lines.extend(f"| `{name}` | {count} |" for name, count in link_reasons.items())
     else:
         lines.append("| 无 | 0 |")
     lines.extend([
