@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Iterator
 from .archive_io import load_archive
 from .errors import CdxError, PagefreezeError
 from .httpmsg import mime_type, parse_response
@@ -110,35 +110,43 @@ def write_index(path: Path, rows: Iterable[CdxRow]) -> list[CdxRow]:
     return ordered
 
 
-def read_index(path: Path) -> list[CdxRow]:
-    """读取并校验 CDX 文本；不合法行给出行号。"""
+def _parse_cdx_line(line: str, number: int) -> CdxRow:
+    parts = line.split(" ")
+    if len(parts) != len(FIELDS) or any(part == "" for part in parts):
+        raise CdxError("CDX_MALFORMED", f"invalid CDX line {number}")
+    try:
+        status = int(parts[3])
+        offset = int(parts[6])
+        length = int(parts[7])
+    except ValueError as exc:
+        raise CdxError("CDX_MALFORMED", f"non-numeric CDX field on line {number}") from exc
+    if not len(parts[1]) == 14 or not parts[1].isdigit():
+        raise CdxError("CDX_MALFORMED", f"invalid timestamp on line {number}")
+    return CdxRow(
+            urlkey=parts[0], timestamp=parts[1], url=parts[2], status=status,
+            mime=parts[4], digest=parts[5], offset=offset, length=length,
+            filename=parts[8],
+        )
+
+
+def iter_index(path: Path) -> Iterator[CdxRow]:
+    """逐行读取并校验 CDX 文本，避免把全部索引行同时留在内存。"""
     if not path.is_file():
         raise CdxError("CDX_MISSING", "index file does not exist")
-    rows: list[CdxRow] = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        with path.open("r", encoding="utf-8") as handle:
+            for number, line in enumerate(handle, start=1):
+                line = line.rstrip("\n").rstrip("\r")
+                if not line.strip():
+                    continue
+                yield _parse_cdx_line(line, number)
     except (OSError, UnicodeDecodeError) as exc:
         raise CdxError("CDX_READ_ERROR", "cannot read index") from exc
-    for number, line in enumerate(lines, start=1):
-        if not line.strip():
-            continue
-        parts = line.split(" ")
-        if len(parts) != len(FIELDS) or any(part == "" for part in parts):
-            raise CdxError("CDX_MALFORMED", f"invalid CDX line {number}")
-        try:
-            status = int(parts[3])
-            offset = int(parts[6])
-            length = int(parts[7])
-        except ValueError as exc:
-            raise CdxError("CDX_MALFORMED", f"non-numeric CDX field on line {number}") from exc
-        if not len(parts[1]) == 14 or not parts[1].isdigit():
-            raise CdxError("CDX_MALFORMED", f"invalid timestamp on line {number}")
-        rows.append(CdxRow(
-                urlkey=parts[0], timestamp=parts[1], url=parts[2], status=status,
-                mime=parts[4], digest=parts[5], offset=offset, length=length,
-                filename=parts[8],
-            ))
-    return rows
+
+
+def read_index(path: Path) -> list[CdxRow]:
+    """读取并校验 CDX 文本；不合法行给出行号。"""
+    return list(iter_index(path))
 
 
 def lookup(rows: Iterable[CdxRow], url: str, ts14: str) -> CdxRow | None:

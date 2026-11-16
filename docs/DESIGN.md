@@ -70,7 +70,7 @@ replay ◄─ cdx + archive_io（按 URL+时间戳定位单条记录）
 
 所有可预期错误继承 `PagefreezeError(code, message)`，CLI 统一输出 `ERR <CODE> <message>`。配置错误退出 3；策略/运行错误退出 4；核验失败退出 5；中断 130。错误码是稳定字符串，测试据此断言，不解析人类描述。
 
-核验不是“读得动就算过”：它重算 block/payload 摘要与 Content-Length，逐行核对 CDX 与记录位置、URL、时间戳、状态、MIME、摘要，并检查 revisit 目标存在、摘要一致、profile 合法。损坏定位到文件与记录序号。
+核验不是“读得动就算过”：它重算 block/payload 摘要与 Content-Length，逐行核对 CDX 与记录位置、URL、时间戳、状态、MIME、摘要，并检查 revisit 目标存在、摘要一致、profile 合法。损坏定位到文件与记录序号。核验逐卷流式进行，跨卷所需的轻量记录位置、record_id、类型、digest、revisit 目标与 CDX 对照写入临时 SQLite，正文随卷释放；每卷记录 gzip EOF 与 WARC 解析边界。引用按覆盖边界分类：相关卷完整结束且目标确实不存在才报确认缺失（`INDEX_MISSING_RECORD` / `REVISIT_TARGET_MISSING`）；目标可能落在截断卷未读尾部时只报未判定（`INDEX_REFERENCE_UNRESOLVED` / `REVISIT_TARGET_UNRESOLVED`），不宣称缺失；损坏卷已解析前缀中的确定摘要/字段错误照常报告，不降级。临时库在任何退出路径下清理，有截断或确认错误时结论一律 fail。
 
 ## 回放
 
@@ -78,7 +78,7 @@ replay ◄─ cdx + archive_io（按 URL+时间戳定位单条记录）
 
 ## 取舍
 
-- 使用全量内存记录换取简单、可核验的确定性；未做流式大归档。
+- 核验按卷流式处理并把跨卷关系索引落到临时 SQLite，峰值内存不随卷数累计；回放与索引重扫仍保留全量内存加载的简单形态。
 - gzip 每卷一个成员，牺牲随机读性能换取可移植与可复现。
 - 只实现 HTTP GET 与 robots 的常见子集，不实现完整 RFC 语义。
 - 数据库仅作运行台账，不作为归档主数据或增量合并依据。

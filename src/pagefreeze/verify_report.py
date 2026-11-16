@@ -22,12 +22,16 @@ def result_to_dict(result: VerifyResult) -> dict[str, object]:
 def write_verify_files(result: VerifyResult, json_path: Path, md_path: Path) -> None:
     """写出 JSON 与 Markdown 核验报告，内容不包含绝对路径或系统时间。"""
     write_text(json_path, stable_json(result_to_dict(result)))
+    truncated = result.stats.get("truncated_segments", 0)
+    unresolved = result.stats.get("unresolved", 0)
     lines = ["# 封页台完整性核验",
         "",
         f"- 结论：**{result.status}**",
         f"- 分卷：{result.stats.get('segments', 0)}",
         f"- 记录：{result.stats.get('records', 0)}",
         f"- 索引条目：{result.stats.get('index_entries', 0)}",
+        f"- 截断卷：{truncated}",
+        f"- 未判定引用：{unresolved}（可能位于截断卷未读尾部，不计为确认缺失）",
         "",
         "## 检查项",
         "",
