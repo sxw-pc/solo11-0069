@@ -53,6 +53,10 @@ def build_summary(
         "verify": {"status": verify.status,
             "issues": len(verify.issues),
             "checks": verify_checks,
+            "coverage": [{"file": item.file, "gzip_eof": item.gzip_eof,
+                    "parse_offset": item.parse_offset, "raw_size": item.raw_size,
+                    "complete": item.complete, "record_count": item.record_count}
+                for item in verify.coverage],
         },
         "files": {"index": paths.index_path.name,
             "ledger": paths.ledger_path.name,
@@ -114,6 +118,7 @@ def write_reports(paths: OutputPaths, summary: dict[str, Any]) -> None:
             "",
             f"- 结论：**{verify['status']}**",
             f"- 问题数：{verify['issues']}",
+            f"- 截断卷：{sum(1 for item in verify['coverage'] if not item['complete'])}",
             "",
             "| 检查 | 状态 | 详情 |",
             "| --- | --- | --- |",

@@ -28,6 +28,30 @@ def test_truncated_gzip_is_located(archive_copy: Path) -> None:
     target = next(issue for issue in result.issues if issue.code == "GZIP_TRUNCATED")
     assert target.file == segment.name
     assert isinstance(target.record_index, int)
+    codes = {issue.code for issue in result.issues}
+    assert "INDEX_MISSING_RECORD" not in codes
+    coverage = next(item for item in result.coverage if item.file == segment.name)
+    assert coverage.gzip_eof is False
+    assert coverage.complete is False
+    # 仅去掉 gzip trailer 时 WARC 字节仍完整，已解析记录不应产生悬空或未判定结论。
+    assert "INDEX_RECORD_UNRESOLVED" not in codes
+    assert result.stats["records"] > 0
+
+
+def test_truncated_gzip_stream_leaves_unresolved_tail(archive_copy: Path) -> None:
+    """gzip 流本身被截短、丢失尾部 WARC 内容时，未读尾部只能未判定。"""
+    segment = sorted(archive_copy.glob("seg-*.warc.gz"))[-1]
+    payload = segment.read_bytes()
+    segment.write_bytes(payload[:len(payload) // 2])  # 砍掉流中段，真实丢失尾部记录
+    result = verify_archive(archive_copy, archive_copy / "index.cdx")
+    assert result.status == "fail"
+    codes = {issue.code for issue in result.issues}
+    assert "GZIP_TRUNCATED" in codes or "GZIP_INVALID" in codes
+    assert "INDEX_MISSING_RECORD" not in codes
+    assert "INDEX_RECORD_UNRESOLVED" in codes
+    coverage = next(item for item in result.coverage if item.file == segment.name)
+    assert coverage.complete is False
+    assert coverage.parse_offset < coverage.raw_size
 
 
 def test_one_byte_tamper_breaks_digest(archive_copy: Path) -> None:
@@ -51,15 +75,23 @@ def test_one_byte_tamper_breaks_digest(archive_copy: Path) -> None:
     assert target.record_index == record.record_index
 
 
-def test_deleted_record_leaves_dangling_index(archive_copy: Path) -> None:
+def test_deleted_record_leaves_unresolved_tail(archive_copy: Path) -> None:
+    """卷尾记录被切坏时 WARC 解析停在边界：未读尾部不能被当作确认缺失。"""
     segment = sorted(archive_copy.glob("seg-*.warc.gz"))[-1]
     raw = _raw(segment)
     records, problem = scan_records(raw)
     assert problem is None
     last = records[-1]
-    segment.write_bytes(gzip_compress(raw[:last.offset]))
+    # 在末条记录内部截断：解析器只能给出此前缀，剩余部分属于未验证尾部。
+    segment.write_bytes(gzip_compress(raw[:last.offset + last.length // 2]))
     result = verify_archive(archive_copy, archive_copy / "index.cdx")
     assert result.status == "fail"
-    target = next(issue for issue in result.issues if issue.code == "INDEX_MISSING_RECORD")
-    assert target.file == segment.name
-    assert isinstance(target.record_index, int)
+    codes = {issue.code for issue in result.issues}
+    assert "INDEX_RECORD_UNRESOLVED" in codes
+    assert "INDEX_MISSING_RECORD" not in codes
+    unresolved = next(issue for issue in result.issues
+        if issue.code == "INDEX_RECORD_UNRESOLVED")
+    assert unresolved.file == segment.name
+    coverage = next(item for item in result.coverage if item.file == segment.name)
+    assert coverage.complete is False
+    assert coverage.parse_offset == last.offset

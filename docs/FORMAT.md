@@ -61,7 +61,9 @@ urlkey timestamp url status mime digest offset length filename
 
 ## 报告与台账
 
-`report.json`、`verify.json` 使用固定键序和相对文件名，不含绝对路径、主机系统时间或随机值。`ledger.sqlite3` 使用 DELETE journal，包含 `runs`、`fetches`、`rejected_targets`、`records`、`verify_results` 五表；同一 `run_id` 重写会先清理旧行。
+`report.json`、`verify.json` 使用固定键序和相对文件名，不含绝对路径、主机系统时间或随机值。`verify.json` 在 `coverage` 中逐卷给出 `gzip_eof`、`parse_offset`、`raw_size`、`complete` 与已解析记录数；Markdown 报告以“分卷覆盖”表呈现。核验问题分两级语义：完整扫描范围内查不到目标是 confirmed missing（`INDEX_MISSING_RECORD`、`REVISIT_TARGET_MISSING`），目标可能落入截断卷未读尾部是 unresolved（`INDEX_RECORD_UNRESOLVED`、`REVISIT_TARGET_UNRESOLVED`）；任一截断或确认错误都使结论 fail。覆盖信息同时写入 `report.json` 并随 `runs.summary_json` 进入台账。
+
+`ledger.sqlite3` 使用 DELETE journal，包含 `runs`、`fetches`、`rejected_targets`、`records`、`verify_results` 五表；同一 `run_id` 重写会先清理旧行。核验用临时 SQLite（`pagefreeze-verify-*` 临时目录）只在单次核验期间存活，结束即清理，不是台账的一部分。
 
 ## 兼容边界
 

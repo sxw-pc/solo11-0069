@@ -13,6 +13,10 @@ def result_to_dict(result: VerifyResult) -> dict[str, object]:
         "stats": result.stats,
         "checks": [{"name": check.name, "status": check.status, "detail": check.detail}
             for check in result.checks],
+        "coverage": [{"file": item.file, "gzip_eof": item.gzip_eof,
+                "parse_offset": item.parse_offset, "raw_size": item.raw_size,
+                "complete": item.complete, "record_count": item.record_count}
+            for item in result.coverage],
         "issues": [{"file": issue.file, "record_index": issue.record_index,
              "code": issue.code, "message": issue.message}
             for issue in result.issues],
@@ -36,6 +40,16 @@ def write_verify_files(result: VerifyResult, json_path: Path, md_path: Path) -> 
     ]
     for check in result.checks:
         lines.append(f"| {check.name} | {check.status} | {check.detail} |")
+    lines.extend(["", "## 分卷覆盖", ""])
+    if not result.coverage:
+        lines.append("无。")
+    else:
+        lines.extend(["| 文件 | gzip EOF | 解析偏移 | 解压字节 | 已解析记录 | 覆盖 |",
+            "| --- | --- | --- | --- | --- | --- |"])
+        for item in result.coverage:
+            state = "完整" if item.complete else "截断"
+            lines.append(f"| {item.file} | {item.gzip_eof} | {item.parse_offset} | "
+                f"{item.raw_size} | {item.record_count} | {state} |")
     lines.extend(["", "## 问题", ""])
     if not result.issues:
         lines.append("无。")

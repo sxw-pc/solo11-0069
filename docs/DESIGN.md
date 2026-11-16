@@ -64,13 +64,13 @@ replay ◄─ cdx + archive_io（按 URL+时间戳定位单条记录）
 
 ## 有界资源
 
-深度、页数、并发、请求间隔、超时、body 上限、MIME 白名单和分卷阈值全部来自配置并有硬边界。抓取池使用固定大小线程池；响应读取有字节上限；归档全量解析用于核验，规模由页数与 body 上限共同约束。
+深度、页数、并发、请求间隔、超时、body 上限、MIME 白名单和分卷阈值全部来自配置并有硬边界。抓取池使用固定大小线程池；响应读取有字节上限；核验逐卷流式解析，正文随卷释放、跨卷元数据落入临时 SQLite，峰值内存由最大单卷而非全量归档约束，规模仍由页数与 body 上限共同约束。
 
 ## 错误模型与退出码
 
 所有可预期错误继承 `PagefreezeError(code, message)`，CLI 统一输出 `ERR <CODE> <message>`。配置错误退出 3；策略/运行错误退出 4；核验失败退出 5；中断 130。错误码是稳定字符串，测试据此断言，不解析人类描述。
 
-核验不是“读得动就算过”：它重算 block/payload 摘要与 Content-Length，逐行核对 CDX 与记录位置、URL、时间戳、状态、MIME、摘要，并检查 revisit 目标存在、摘要一致、profile 合法。损坏定位到文件与记录序号。
+核验不是“读得动就算过”：它重算 block/payload 摘要与 Content-Length，逐行核对 CDX 与记录位置、URL、时间戳、状态、MIME、摘要，并检查 revisit 目标存在、摘要一致、profile 合法。损坏定位到文件与记录序号。核验逐卷进行：一卷读完即做记录级检查，只把轻量元数据（位置、record_id、类型、digest、revisit 目标、CDX 对照）写入临时 SQLite，正文随卷释放，峰值内存不随分卷数量累计；CDX 逐行流式读取。每卷登记 gzip EOF 与 WARC 解析边界，关系结论按覆盖范围分类：完整扫描范围内查不到才报 confirmed missing（`INDEX_MISSING_RECORD`、`REVISIT_TARGET_MISSING`）；目标可能位于截断卷未读尾部时报 unresolved（`INDEX_RECORD_UNRESOLVED`、`REVISIT_TARGET_UNRESOLVED`），不把未知当成已证实坏引用；截断不降低已解析前缀中的确定摘要错误。临时库在正常与异常路径都会清理。存在截断或确认错误时核验结论一律 fail。
 
 ## 回放
 
@@ -78,7 +78,7 @@ replay ◄─ cdx + archive_io（按 URL+时间戳定位单条记录）
 
 ## 取舍
 
-- 使用全量内存记录换取简单、可核验的确定性；未做流式大归档。
+- 核验按卷流式处理并以临时 SQLite 承载跨卷轻量元数据，避免大正文随分卷数量累计驻留；回放路径仍以全量内存记录换取直接定位，规模由页数与 body 上限约束。
 - gzip 每卷一个成员，牺牲随机读性能换取可移植与可复现。
 - 只实现 HTTP GET 与 robots 的常见子集，不实现完整 RFC 语义。
 - 数据库仅作运行台账，不作为归档主数据或增量合并依据。
