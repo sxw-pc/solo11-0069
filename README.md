@@ -85,6 +85,19 @@ python -m pagefreeze demo     --config config --now 20240115000000 --out runtime
 
 `config/crawl.json` 控制种子、深度、页数上限、并发、请求间隔、超时、响应体上限、MIME 白名单、robots 和 UA；`config/archive.json` 控制归档目录、分卷阈值、摘要算法、索引/台账文件名、报告目录与 UUID 命名空间。配置会做边界与路径逃逸校验，错误码稳定（如 `CFG_DEPTH_RANGE`、`CFG_PATH`、`CFG_UUID`）。
 
+### Sitemap 入口
+
+robots.txt 的 `Sitemap:` 行会被解析（保留声明原文与行号），用于覆盖没有 HTML 链接可达、但站点明确列入 Sitemap 的页面。相关配置：
+
+- `sitemap_entry_strategy`：二选一的入口策略，默认 `sitemap_priority`。
+  - `sitemap_priority`（策略 A）：Sitemap 页面作为优先级高于首页 HTML 链接的独立批次，先于导航页消费 `max_pages` 预算，更完整地履行站点声明的目录。
+  - `fifo_merged`（策略 B）：Sitemap 页面与 HTML 发现链接合并进普通 FIFO BFS，先扩展首页链接，更忠实保持当前导航覆盖。
+  - 两者执行完全相同的 robots、回环、规范化、visited 去重、深度/页数/体积/MIME 约束；但在预算耗尽时实际归档的页面集合可能不同，报告 `crawl.sitemap_entry_strategy` 会显式写明所用策略，不把入口顺序当作无影响的实现细节。
+  - CLI 可用 `--sitemap-strategy {sitemap_priority,fifo_merged}` 临时覆盖配置（`demo`/`crawl` 子命令）。
+- `sitemap_max_depth`：sitemapindex 递归深度上限（0..5，默认 2），URL 循环由 visited 集合截断。
+
+安全与边界：只抓取与种子同一回环 origin 的 Sitemap，跨 origin 声明在建立连接前拒绝并记入 `rejected_targets`（原因 `SITEMAP_CROSS_ORIGIN`）；XML 解析禁用 DOCTYPE 与外部实体，不访问任何外部资源；单个 Sitemap 畸形只记 `sitemap_parse_error` 并继续其他声明与 HTML frontier；非 XML 的 Sitemap 响应记 `mime_not_allowed`，绝不送入 HTML 链接提取。FetchLog、台账与报告用 `kind`（`page`/`sitemap`/`robots`）、`source_url` 与 `parent_sitemap` 区分来源并支持回溯。
+
 ## 文档
 
 - [docs/FORMAT.md](docs/FORMAT.md)：WARC 子集、CDX 字段、摘要与偏移、revisit 规则、固定 gzip。

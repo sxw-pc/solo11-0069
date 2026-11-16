@@ -74,7 +74,7 @@ def test_missing_early_and_invalid_requests(demo_result: PipelineResult) -> None
     assert json.loads(invalid[2])["error"]["code"] == "REPLAY_BAD_PARAM"
     assert index_page[0] == 200
     assert b"<script" not in index_page[2]
-    assert "快照数量：16".encode("utf-8") in index_page[2]
+    assert "快照数量：20".encode("utf-8") in index_page[2]
 
 
 def test_revisit_body_is_followed(demo_result: PipelineResult) -> None:

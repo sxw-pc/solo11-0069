@@ -24,13 +24,17 @@ _SCHEMA = (
         mime TEXT NOT NULL,
         size INTEGER NOT NULL,
         outcome TEXT NOT NULL,
-        reason TEXT
+        reason TEXT,
+        kind TEXT NOT NULL DEFAULT 'page',
+        source_url TEXT,
+        parent_sitemap TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS rejected_targets (id INTEGER PRIMARY KEY AUTOINCREMENT,
         run_id TEXT NOT NULL,
         source_url TEXT NOT NULL,
         target TEXT NOT NULL,
-        reason TEXT NOT NULL
+        reason TEXT NOT NULL,
+        source_kind TEXT NOT NULL DEFAULT 'page'
     )""",
     """CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY AUTOINCREMENT,
         run_id TEXT NOT NULL,
@@ -63,10 +67,27 @@ def open_ledger(path: Path) -> sqlite3.Connection:
         connection.execute("PRAGMA foreign_keys=ON")
         for statement in _SCHEMA:
             connection.execute(statement)
+        _migrate_columns(connection)
         connection.commit()
         return connection
     except (OSError, sqlite3.Error) as exc:
         raise LedgerError("LEDGER_OPEN_ERROR", f"cannot open ledger: {exc}") from exc
+
+
+def _migrate_columns(connection: sqlite3.Connection) -> None:
+    """给早期版本台账补列；SQLite 不支持 IF NOT EXISTS 的 ADD COLUMN。"""
+    fetch_columns = {row[1] for row in connection.execute("PRAGMA table_info(fetches)")}
+    for column, declaration in (
+        ("kind", "TEXT NOT NULL DEFAULT 'page'"),
+        ("source_url", "TEXT"),
+        ("parent_sitemap", "TEXT"),
+    ):
+        if column not in fetch_columns:
+            connection.execute(f"ALTER TABLE fetches ADD COLUMN {column} {declaration}")
+    rejected_columns = {row[1] for row in connection.execute("PRAGMA table_info(rejected_targets)")}
+    if "source_kind" not in rejected_columns:
+        connection.execute(
+            "ALTER TABLE rejected_targets ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'page'")
 
 
 def write_run(
@@ -93,15 +114,19 @@ def write_run(
                 (run_id, timestamp, config_digest, status, stable_json(summary)),
             )
             connection.executemany(
-                "INSERT INTO fetches(run_id,url,urlkey,depth,status,mime,size,outcome,reason) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO fetches(run_id,url,urlkey,depth,status,mime,size,outcome,reason,"
+                "kind,source_url,parent_sitemap) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 [(run_id, row["url"], row["urlkey"], row["depth"], row.get("status"),
-                     row["mime"], row["size"], row["outcome"], row.get("reason"))
+                     row["mime"], row["size"], row["outcome"], row.get("reason"),
+                     row.get("kind", "page"), row.get("source_url"),
+                     row.get("parent_sitemap"))
                     for row in fetches],
             )
             connection.executemany(
-                "INSERT INTO rejected_targets(run_id,source_url,target,reason) VALUES (?,?,?,?)",
-                [(run_id, row["source_url"], row["target"], row["reason"]) for row in rejected],
+                "INSERT INTO rejected_targets(run_id,source_url,target,reason,source_kind) "
+                "VALUES (?,?,?,?,?)",
+                [(run_id, row["source_url"], row["target"], row["reason"],
+                     row.get("source_kind", "page")) for row in rejected],
             )
             connection.executemany(
                 "INSERT INTO records(run_id,record_id,type,url,urlkey,timestamp,filename,"

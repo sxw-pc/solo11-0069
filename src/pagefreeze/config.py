@@ -14,6 +14,10 @@ from urllib.parse import urlsplit
 from .errors import ConfigError
 from .digest import sha256_bytes
 
+SITEMAP_PRIORITY = "sitemap_priority"
+FIFO_MERGED = "fifo_merged"
+_SITEMAP_STRATEGIES = frozenset({SITEMAP_PRIORITY, FIFO_MERGED})
+
 
 @dataclass(frozen=True)
 class CrawlConfig:
@@ -28,6 +32,8 @@ class CrawlConfig:
     allowed_mime: tuple[str, ...]
     respect_robots: bool
     user_agent: str
+    sitemap_entry_strategy: str
+    sitemap_max_depth: int
 
 
 @dataclass(frozen=True)
@@ -155,6 +161,16 @@ def _validate_crawl(raw: dict[str, Any]) -> CrawlConfig:
         if not isinstance(item, str) or "/" not in item:
             raise ConfigError("CFG_MIME", "each allowed_mime entry must look like type/subtype")
         mime_values.append(item.strip().lower())
+    strategy = raw.get("sitemap_entry_strategy", "sitemap_priority")
+    if not isinstance(strategy, str) or strategy not in _SITEMAP_STRATEGIES:
+        raise ConfigError("CFG_SITEMAP_STRATEGY",
+            "crawl.sitemap_entry_strategy must be 'sitemap_priority' (A) or 'fifo_merged' (B)")
+    sitemap_depth = raw.get("sitemap_max_depth", 2)
+    if isinstance(sitemap_depth, bool) or not isinstance(sitemap_depth, int):
+        raise ConfigError("CFG_TYPE", "crawl.sitemap_max_depth must be an integer")
+    if not 0 <= sitemap_depth <= 5:
+        raise ConfigError("CFG_SITEMAP_DEPTH_RANGE",
+            "crawl.sitemap_max_depth must be 0..5")
     return CrawlConfig(seed_urls=tuple(seed_tuple),
         max_depth=depth,
         max_pages=pages,
@@ -165,6 +181,8 @@ def _validate_crawl(raw: dict[str, Any]) -> CrawlConfig:
         allowed_mime=tuple(mime_values),
         respect_robots=_boolean(raw, "respect_robots", "crawl"),
         user_agent=_string(raw, "user_agent", "crawl"),
+        sitemap_entry_strategy=strategy,
+        sitemap_max_depth=sitemap_depth,
     )
 
 
@@ -224,6 +242,8 @@ def _canonical(settings: CrawlConfig, archive: ArchiveConfig) -> str:
             "allowed_mime": list(settings.allowed_mime),
             "respect_robots": settings.respect_robots,
             "user_agent": settings.user_agent,
+            "sitemap_entry_strategy": settings.sitemap_entry_strategy,
+            "sitemap_max_depth": settings.sitemap_max_depth,
         },
         "archive": {"archive_dir": archive.archive_dir,
             "segment_size_bytes": archive.segment_size_bytes,

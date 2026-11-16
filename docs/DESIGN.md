@@ -12,8 +12,8 @@
 | --- | --- | --- |
 | 入口 | `__main__`、`cli` | argparse 子命令、稳定退出码与错误码、stdout 摘要 |
 | 配置 | `config` | 两文件 schema 校验、范围检查、路径逃逸阻断、配置摘要 |
-| 策略 | `policy` | URL 规范化、SURT urlkey、回环白名单、robots 解析 |
-| 抓取 | `frontier`、`ratelimit`、`fetch`、`links`、`crawl` | 有界 BFS、并发、限速、超时/体积/MIME 处理 |
+| 策略 | `policy`、`sitemap` | URL 规范化、SURT urlkey、回环白名单、robots/Sitemap 声明解析、安全 XML 解析 |
+| 抓取 | `frontier`、`ratelimit`、`fetch`、`links`、`crawl`、`sitemap_crawl`、`audit` | 有界 BFS、双入口车道、Sitemap 有界递归、并发、限速、超时/体积/MIME 处理与审计留痕 |
 | 归档 | `warc`、`warc_build`、`store`、`archive_io` | 记录构造/解析、排序去重、分卷、容错读取 |
 | 索引 | `cdx` | 从记录生成、排序去重、稳定写读、lookup/window |
 | 核验 | `verify`、`verify_report` | 结构/截断/摘要/索引/revisit 交叉检查与报告 |
@@ -40,14 +40,17 @@ replay ◄─ cdx + archive_io（按 URL+时间戳定位单条记录）
 
 ## 抓取状态机
 
-1. 校验种子为回环 HTTP URL；若有 `respect_robots`，先预取每个种子的 `/robots.txt`。
-2. 种子按顺序进入 FIFO frontier，深度 0；记录已处理集合，避免重复。
-3. 工作线程取任务，`RateLimiter` 在进程级按最小间隔串行发放请求许可。
-4. `fetch` 在**连接前**再次检查 DNS/主机文本是否属于回环白名单；使用不自动跟随重定向的 opener，逐跳人工处理，且每一跳都重新校验。
-5. 响应按上限流式读取；超限关闭连接并记为 `body_too_large`；超时记为 `timeout`；MIME 不在白名单记为 `mime_skipped`；robots 禁止记为 `robots_disallowed`。
-6. 4xx/5xx 仍作为可归档响应保留，不视为抓取器故障。
-7. 仅对 HTML 提取 `<a href>`，解析相对链接并规范化；非回环外链进入 `rejected`，在连接前拒绝并写入台账。
-8. 达到 `max_pages` 或 frontier 为空时停止；每个 URL 只归档一次。
+1. 校验种子为回环 HTTP URL；若有 `respect_robots`，先预取每个种子的 `/robots.txt`（记为 `kind=robots`）。
+2. 解析 robots 的 `Sitemap:` 声明：同回环 origin 的进入 Sitemap 发现队列，跨 origin 声明在连接前拒绝（`SITEMAP_CROSS_ORIGIN`）。Sitemap 抓取（`kind=sitemap`）支持 `urlset`/`sitemapindex`、默认命名空间与相对 loc，按 `sitemap_max_depth` 有界递归，visited 集合截断 URL 循环；XML 解析禁用 DOCTYPE 与外部实体，畸形只记 `sitemap_parse_error`，非 XML 记 `mime_not_allowed`，均不提取链接。
+3. 种子进入 frontier 的种子车道并最先单独扩展；Sitemap 页面进入优先车道，HTML 链接进入普通车道。`sitemap_priority`（A）按 种子→Sitemap→HTML 出队，`fifo_merged`（B）按 种子→HTML→Sitemap 出队；车道内各自 FIFO。
+4. 工作线程取任务，`RateLimiter` 在进程级按最小间隔串行发放请求许可；只有 `kind=page` 的尝试计入 `max_pages`，Sitemap/robots 开销不占用页面预算。
+5. `fetch` 在**连接前**再次检查 DNS/主机文本是否属于回环白名单；使用不自动跟随重定向的 opener，逐跳人工处理，且每一跳都重新校验。
+6. 响应按上限流式读取；超限关闭连接并记为 `body_too_large`；超时记为 `timeout`；MIME 不在白名单记为 `mime_not_allowed`；robots 禁止记为 `robots_disallowed`。
+7. 4xx/5xx 仍作为可归档响应保留，不视为抓取器故障。
+8. 仅对 HTML 提取 `<a href>`，解析相对链接并规范化；非回环外链进入 `rejected`，在连接前拒绝并写入台账。Sitemap loc 走完全相同的规范化、回环、robots、visited、深度/页数/体积/MIME 检查，并记录 `source_url`/`parent_sitemap`。
+9. 达到 `max_pages` 或 frontier 为空时停止；每个 URL 只归档一次。
+
+入口策略不是无影响的实现细节：在 `max_pages` 耗尽时，A 优先归档站点声明目录中的页面，B 优先保留 BFS 导航覆盖，二者回放的业务页面集合可能不同；报告显式记录策略与各类来源的尝试/归档/跳过数。
 
 并发只影响抓取完成顺序。归档写入前按 `(urlkey, url)` 重新排序，因此线程调度不改变 WARC/CDX 字节。
 

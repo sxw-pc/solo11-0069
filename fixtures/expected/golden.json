@@ -1,21 +1,21 @@
 {
   "now": "20240115000000",
-  "records": 33,
-  "requests": 16,
-  "responses": 15,
+  "records": 41,
+  "requests": 20,
+  "responses": 19,
   "revisits": 1,
-  "rejected": 1,
+  "rejected": 2,
   "skipped": {
     "body_too_large": 1,
     "robots_disallowed": 1,
     "timeout": 1
   },
   "segments": 2,
-  "index_entries": 16,
+  "index_entries": 20,
   "verify": "pass",
-  "index_sha256": "c55988d7c38af834c58e2c657dc5b7225a1ac66f1567b79cf78edaa3c44c840b",
+  "index_sha256": "9e61a5de4e871edb76f0e64788d1039a72d7a1036e3a188c070b9722a5524cd3",
   "segment_sha256": {
-    "seg-00000.warc.gz": "0fac6e13831112fec1c2d7012447cf9646807feb3694c3e6e57afae882ec8e7a",
-    "seg-00001.warc.gz": "5747717fc6631844699921fa4cbd41d029443d05333aa2967a245be241a3b26a"
+    "seg-00000.warc.gz": "fd99739c3adbca77cbadc92ea8841fc5e41feb3173235ce4c82d5e72a6aa0f2c",
+    "seg-00001.warc.gz": "414566776a8dd9bbfe1d71f2dea1cbed96afdef871365ecf88bb4a14b682d0e0"
   }
 }

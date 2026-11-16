@@ -52,7 +52,7 @@ def test_malformed_index_is_rejected(tmp_path: Path) -> None:
 def test_archive_offsets_jump_to_exact_record(demo_result: PipelineResult, tmp_path: Path
 ) -> None:
     rows = rows_from_archive(demo_result.paths.archive_dir)
-    assert len(rows) == 16
+    assert len(rows) == 20
     row = next(item for item in rows if item.url.endswith("/zh/"))
     compressed = (demo_result.paths.archive_dir / row.filename).read_bytes()
     raw = zlib.decompress(compressed, 16 + zlib.MAX_WBITS)

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from .errors import PolicyError
 
@@ -89,6 +89,13 @@ def validate_bind_host(host: str) -> str:
 
 
 @dataclass(frozen=True)
+class SitemapDeclaration:
+    """robots.txt 中一条 Sitemap 声明，保留声明行上的原始 URL 文本。"""
+    raw_url: str
+    line_number: int
+
+
+@dataclass(frozen=True)
 class RobotsRules:
     """最小 robots 规则集：按最长匹配选择，Allow 与 Disallow 等长时 Allow 胜。"""
     patterns: tuple[tuple[bool, str], ...]
@@ -108,6 +115,13 @@ class RobotsRules:
         return best_allow
 
 
+@dataclass(frozen=True)
+class RobotsDocument:
+    """解析后的 robots.txt：路径规则与 Sitemap 声明互相独立。"""
+    rules: RobotsRules
+    sitemaps: tuple[SitemapDeclaration, ...] = field(default_factory=tuple)
+
+
 def _robots_match(pattern: str, text: str) -> bool:
     anchored = pattern.endswith("$")
     raw = pattern[:-1] if anchored else pattern
@@ -121,24 +135,33 @@ def _agent_matches(agent: str, user_agent: str) -> bool:
     return value == "*" or value in user_agent.lower()
 
 
-def parse_robots(text: str, user_agent: str) -> RobotsRules:
-    """解析 robots.txt 的 User-agent / Allow / Disallow 子集。"""
+def parse_robots(text: str, user_agent: str) -> RobotsDocument:
+    """解析 robots.txt：User-agent / Allow / Disallow 子集与全部 Sitemap 声明。
+
+    Sitemap 是与 agent 分组无关的站点级字段：无论出现在哪个分组内，都按
+    声明顺序原样保留（含空白与大小写），交由抓取层做规范化与同源校验。
+    """
     groups: list[tuple[list[str], list[tuple[bool, str]]]] = []
     agents: list[str] = []
     rules: list[tuple[bool, str]] = []
+    sitemaps: list[SitemapDeclaration] = []
 
     def flush() -> None:
         nonlocal agents, rules
         if agents:
             groups.append((agents, rules))
         agents, rules = [], []
-    for line in text.splitlines():
+    for line_number, line in enumerate(text.splitlines(), start=1):
         clean = line.split("#", 1)[0].strip()
         if not clean or ":" not in clean:
             continue
         field, value = clean.split(":", 1)
         name = field.strip().lower()
         content = value.strip()
+        if name == "sitemap":
+            if content:
+                sitemaps.append(SitemapDeclaration(raw_url=content, line_number=line_number))
+            continue
         if name == "user-agent":
             if rules:
                 flush()
@@ -154,7 +177,17 @@ def parse_robots(text: str, user_agent: str) -> RobotsRules:
         for group_agents, group_rules in groups:
             if any(agent == "*" for agent in group_agents):
                 selected.extend(group_rules)
-    return RobotsRules(tuple(selected))
+    return RobotsDocument(rules=RobotsRules(tuple(selected)), sitemaps=tuple(sitemaps))
+
+
+def same_origin(url: str, other: str) -> bool:
+    """比较两个 http(s) URL 的 (scheme, host, 规范化端口) origin 是否一致。"""
+    left = urlsplit(normalize_url(url))
+    right = urlsplit(normalize_url(other))
+    left_port = left.port or _DEFAULT_PORTS[left.scheme]
+    right_port = right.port or _DEFAULT_PORTS[right.scheme]
+    return (left.scheme, (left.hostname or "").lower().rstrip("."), left_port) == (
+        right.scheme, (right.hostname or "").lower().rstrip("."), right_port)
 
 
 def robots_url_for(url: str) -> str:

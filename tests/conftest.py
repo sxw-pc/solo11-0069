@@ -13,6 +13,8 @@ if str(SRC) not in sys.path:
 from pagefreeze.config import load_settings  # noqa: E402
 from pagefreeze.pipeline import PipelineResult, execute_demo  # noqa: E402
 from pagefreeze.util import parse_clock  # noqa: E402
+from sitemap_fixtures import SitemapSite, sitemap_site  # noqa: E402,F401
+_ = (SitemapSite, sitemap_site)  # 注册为 pytest fixture，供 test_sitemap_* 使用
 FIXED_NOW = "20240115000000"
 
 

@@ -43,7 +43,7 @@ def test_robots_longest_match_and_allow() -> None:
     rules = parse_robots("User-agent: *\nDisallow: /private/\nAllow: /private/open\n"
         "Disallow: /tmp/*.txt$\n",
         "pagefreeze-test",
-    )
+    ).rules
     assert rules.allowed("/")
     assert not rules.allowed("/private/secret")
     assert rules.allowed("/private/open/page")
@@ -54,6 +54,32 @@ def test_robots_longest_match_and_allow() -> None:
 def test_robots_specific_agent_overrides_star() -> None:
     rules = parse_robots("User-agent: *\nDisallow: /\n\nUser-agent: pagefreeze\nDisallow: /secret\n",
         "pagefreeze-test",
-    )
+    ).rules
     assert rules.allowed("/public")
     assert not rules.allowed("/secret/page")
+
+
+def test_parse_robots_extracts_sitemap_declarations_in_order() -> None:
+    document = parse_robots(
+        "User-agent: *\nDisallow: /x/\n"
+        "Sitemap: http://127.0.0.1:18080/sm1.xml\n"
+        "# Sitemap: http://127.0.0.1:18080/commented.xml\n"
+        "Sitemap:  http://localhost:18080/sm2.xml \n",
+        "pagefreeze-test",
+    )
+    assert [item.raw_url for item in document.sitemaps] == [
+        "http://127.0.0.1:18080/sm1.xml",
+        "http://localhost:18080/sm2.xml",
+    ]
+    assert [item.line_number for item in document.sitemaps] == [3, 5]
+    assert document.rules.allowed("/public")
+    assert not document.rules.allowed("/x/secret")
+
+
+def test_same_origin_compares_scheme_host_and_port() -> None:
+    from pagefreeze.policy import same_origin
+    assert same_origin("http://127.0.0.1:18080/a", "http://127.0.0.1:18080/b/c")
+    assert same_origin("http://127.0.0.1/a", "http://127.0.0.1:80/b")
+    assert not same_origin("http://127.0.0.1:18080/a", "http://127.0.0.1:19090/a")
+    assert not same_origin("http://127.0.0.1:18080/a", "https://127.0.0.1:18080/a")
+    assert not same_origin("http://127.0.0.1:18080/a", "http://203.0.113.7/a")

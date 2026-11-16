@@ -15,5 +15,7 @@
     "image/png"
   ],
   "respect_robots": true,
-  "user_agent": "pagefreeze-demo/0.1 (local archive)"
+  "user_agent": "pagefreeze-demo/0.1 (local archive)",
+  "sitemap_entry_strategy": "sitemap_priority",
+  "sitemap_max_depth": 2
 }

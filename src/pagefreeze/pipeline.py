@@ -111,10 +111,12 @@ def _finalize(
         fetches=[{
                 "url": log.url, "urlkey": log.urlkey, "depth": log.depth,
                 "status": log.status, "mime": log.mime, "size": log.size,
-                "outcome": log.outcome, "reason": log.reason,
+                "outcome": log.outcome, "reason": log.reason, "kind": log.kind,
+                "source_url": log.source_url, "parent_sitemap": log.parent_sitemap,
             }
             for log in crawl.logs],
-        rejected=[{"source_url": item.source_url, "target": item.target, "reason": item.reason}
+        rejected=[{"source_url": item.source_url, "target": item.target, "reason": item.reason,
+            "source_kind": item.source_kind}
             for item in crawl.rejected],
         records=_record_rows(write),
         checks=[{

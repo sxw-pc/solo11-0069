@@ -4,9 +4,10 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 from . import cdx
-from .config import load_settings, paths_for
+from .config import FIFO_MERGED, SITEMAP_PRIORITY, load_settings, paths_for
 from .digest import files_fingerprint
 from .errors import ConfigError, PagefreezeError, PolicyError
 from .mocksite import create_mock_server
@@ -36,8 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
         description="封页台：本地网站归档封装、索引、离线回放与完整性核验。",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("demo", parents=[common], help="一条命令跑通全流程")
-    sub.add_parser("crawl", parents=[common], help="抓取配置中的种子并归档")
+    p_demo = sub.add_parser("demo", parents=[common], help="一条命令跑通全流程")
+    _add_sitemap_args(p_demo)
+    p_crawl = sub.add_parser("crawl", parents=[common], help="抓取配置中的种子并归档")
+    _add_sitemap_args(p_crawl)
     p_index = sub.add_parser("index", parents=[common], help="从归档卷重建 CDX 索引")
     p_index.add_argument("--url", help="按规范化 URL 过滤")
     p_index.add_argument("--urlkey", help="按 urlkey 过滤")
@@ -58,7 +61,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _settings(args: argparse.Namespace):
-    return load_settings(args.config)
+    settings = load_settings(args.config)
+    strategy = getattr(args, "sitemap_strategy", None)
+    if strategy is None:
+        return settings
+    if strategy not in (SITEMAP_PRIORITY, FIFO_MERGED):
+        raise ConfigError("CFG_SITEMAP_STRATEGY",
+            "--sitemap-strategy must be 'sitemap_priority' (A) or 'fifo_merged' (B)")
+    return replace(settings, crawl=replace(settings.crawl, sitemap_entry_strategy=strategy))
+
+
+def _add_sitemap_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--sitemap-strategy",
+        choices=(SITEMAP_PRIORITY, FIFO_MERGED),
+        help="覆盖 crawl.sitemap_entry_strategy：A=sitemap_priority，B=fifo_merged")
 
 
 def _summary_line(prefix: str, result: PipelineResult) -> str:

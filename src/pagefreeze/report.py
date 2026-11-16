@@ -40,6 +40,9 @@ def build_summary(
             "rejected_targets": len(crawl.rejected),
             "skipped": len(crawl.logs) - len(crawl.hits),
             "skip_reasons": crawl.skip_reasons(),
+            "sitemap_entry_strategy": crawl.sitemap_strategy,
+            "request_kinds": crawl.source_breakdown(),
+            "page_sources": crawl.page_source_breakdown(),
         },
         "archive": {"segments": len(write.segments),
             "records": len(write.records),
@@ -83,10 +86,31 @@ def write_reports(paths: OutputPaths, summary: dict[str, Any]) -> None:
         f"- 回环外拒绝：{crawl['rejected_targets']}",
         f"- 跳过或失败：{crawl['skipped']}",
         f"- 响应体字节：{crawl['bytes']}",
+        f"- Sitemap 入口策略：`{crawl['sitemap_entry_strategy']}`"
+        "（A=sitemap_priority 独立优先批次，B=fifo_merged 合并 FIFO）",
         "",
-        "| 跳过原因 | 次数 |",
-        "| --- | --- |",
+        "| 请求类别 | 尝试 | 归档 | 跳过 |",
+        "| --- | --- | --- | --- |",
     ]
+    for kind in ("page", "sitemap", "robots"):
+        row = crawl["request_kinds"].get(kind, {"attempted": 0, "archived": 0, "skipped": 0})
+        lines.append(f"| {kind} | {row['attempted']} | {row['archived']} | {row['skipped']} |")
+    lines.extend([
+            "",
+            "| 页面来源 | 尝试 | 归档 | 跳过 |",
+            "| --- | --- | --- | --- |",
+        ])
+    page_sources = crawl["page_sources"]
+    if page_sources:
+        for source, row in page_sources.items():
+            lines.append(f"| `{source}` | {row['attempted']} | {row['archived']} | {row['skipped']} |")
+    else:
+        lines.append("| 无 | 0 | 0 | 0 |")
+    lines.extend([
+            "",
+            "| 跳过原因 | 次数 |",
+            "| --- | --- |",
+        ])
     reasons = crawl["skip_reasons"]
     if reasons:
         lines.extend(f"| `{name}` | {count} |" for name, count in reasons.items())

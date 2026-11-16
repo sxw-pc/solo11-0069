@@ -23,7 +23,9 @@ _CSS = ("body{font-family:system-ui,sans-serif;max-width:46rem;margin:2rem auto;
     ".muted{color:#59636f}")
 _PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
     "+A8AAQUBAScY42YAAAAASUVORK5CYII=")
-_ROBOTS = "User-agent: *\nCrawl-delay: 0\nDisallow: /private/\n"
+_ROBOTS = ("User-agent: *\nCrawl-delay: 0\nDisallow: /private/\n"
+    "Sitemap: http://127.0.0.1:18080/sitemap.xml\n"
+    "Sitemap: http://203.0.113.7/sitemap-offsite.xml\n")
 _DUPLICATE = ("<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\">"
     "<title>重复载荷示例</title><body><h1>相同响应体</h1>"
     "<p>两个不同 URL 返回完全相同的字节，用于 revisit 去重验证。</p>"
@@ -113,6 +115,51 @@ def _gzip_response() -> MockResponse:
     )
 
 
+def _sitemap_urlset() -> bytes:
+    return ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+        "<url><loc>/sm/alpha</loc></url>\n"
+        "<url><loc>sm/beta</loc></url>\n"
+        "<url><loc>http://127.0.0.1:18080/sm/gamma</loc></url>\n"
+        "<url><loc>/sm/alpha</loc></url>\n"
+        "<url><loc>/private/secret</loc></url>\n"
+        "</urlset>\n").encode("utf-8")
+
+
+def _sitemap_index() -> bytes:
+    return ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+        "<sitemap><loc>/sitemap-child.xml</loc></sitemap>\n"
+        "<sitemap><loc>/sitemap-loop.xml</loc></sitemap>\n"
+        "</sitemapindex>\n").encode("utf-8")
+
+
+def _sitemap_child() -> bytes:
+    return ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+        "<url><loc>/sm/delta</loc></url>\n"
+        "</urlset>\n").encode("utf-8")
+
+
+def _sitemap_loop() -> bytes:
+    return ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+        "<sitemap><loc>/sitemap-index.xml</loc></sitemap>\n"
+        "</sitemapindex>\n").encode("utf-8")
+
+
+def _sitemap_broken() -> bytes:
+    return b"<?xml version=\"1.0\"?>\n<urlset><url><loc>/sm/never</loc></url>\n"
+
+
+def _sm_page(name: str) -> bytes:
+    return _page(f"Sitemap 页面 {name}",
+        f"<h1>仅由 Sitemap 声明的页面 {name}</h1>"
+        "<p>该页面没有任何 HTML 链接可达。</p>"
+        f"<p>标识：{name}</p>",
+    )
+
+
 def _ok(content_type: str, body: bytes, route: str) -> MockResponse:
     return MockResponse(200, "OK", content_type, body, (("X-Mock-Route", route),))
 
@@ -183,6 +230,19 @@ def respond(raw_target: str) -> MockResponse:
         return _ok("image/png", _PNG, "png")
     if path == "/robots.txt":
         return _ok("text/plain; charset=utf-8", _ROBOTS.encode("utf-8"), "robots")
+    if path == "/sitemap.xml":
+        return _ok("application/xml; charset=utf-8", _sitemap_urlset(), "sitemap")
+    if path == "/sitemap-index.xml":
+        return _ok("application/xml; charset=utf-8", _sitemap_index(), "sitemap-index")
+    if path == "/sitemap-child.xml":
+        return _ok("application/xml; charset=utf-8", _sitemap_child(), "sitemap-child")
+    if path == "/sitemap-loop.xml":
+        return _ok("application/xml; charset=utf-8", _sitemap_loop(), "sitemap-loop")
+    if path == "/sitemap-broken.xml":
+        return _ok("application/xml; charset=utf-8", _sitemap_broken(), "sitemap-broken")
+    if path in ("/sm/alpha", "/sm/beta", "/sm/gamma", "/sm/delta", "/sm/never"):
+        name = path.rsplit("/", 1)[-1]
+        return _ok("text/html; charset=utf-8", _sm_page(name), f"sm-{name}")
     if path == "/huge":
         return _ok("text/html; charset=utf-8", _huge_page(), "huge")
     if path == "/slow":
