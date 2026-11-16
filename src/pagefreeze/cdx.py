@@ -11,6 +11,19 @@ from .policy import normalize_url, urlkey
 from .util import parse_warc_date, timestamp14, write_text
 from .warc import WarcRecord
 
+# 索引行与所定位 WARC 记录之间的逐字段绑定问题码，
+# 供全量核验（verify）与在线回放（replay）复用同一套判定。
+INDEX_BINDING_CODES = frozenset((
+    "INDEX_LENGTH_MISMATCH",
+    "INDEX_URL_MISMATCH",
+    "INDEX_URLKEY_MISMATCH",
+    "INDEX_TIMESTAMP_MISMATCH",
+    "INDEX_STATUS_MISMATCH",
+    "INDEX_MIME_MISMATCH",
+    "INDEX_DIGEST_MISMATCH",
+    "INDEX_RECORD_TYPE_MISMATCH",
+))
+
 FIELDS = ("urlkey", "timestamp", "url", "status", "mime", "digest",
     "offset", "length", "filename",
 )
@@ -140,6 +153,45 @@ def read_index(path: Path) -> list[CdxRow]:
             ))
     return rows
 
+
+def bind_index_row(row: CdxRow, record: WarcRecord) -> list[tuple[str, str]]:
+    """逐字段核对 CDX 行与其按 (filename, offset) 定位到的 WARC 记录。
+
+    纯语法之外的语义绑定：URL/urlkey、timestamp、status、MIME、payload
+    digest、length，以及 response/revisit 记录类型。返回 ``(code, message)``
+    列表；空列表表示该行与记录完全绑定。HTTP 块本身无法解析时返回原始错误码，
+    调用方据此拒绝把该记录当作行所声称的快照。
+    """
+    issues: list[tuple[str, str]] = []
+    if row.length != record.length:
+        issues.append(("INDEX_LENGTH_MISMATCH",
+            "index length differs from record length"))
+    target = record.header("WARC-Target-URI")
+    date_value = record.header("WARC-Date")
+    try:
+        message = parse_response(record.block)
+        normalized = normalize_url(target or "")
+        parsed_date = parse_warc_date(date_value or "")
+    except PagefreezeError as exc:
+        return [(exc.code, exc.message)]
+    if row.url != normalized:
+        issues.append(("INDEX_URL_MISMATCH", "index URL differs from record"))
+    if row.urlkey != urlkey(normalized):
+        issues.append(("INDEX_URLKEY_MISMATCH", "index urlkey differs from record"))
+    if row.timestamp != timestamp14(parsed_date):
+        issues.append(("INDEX_TIMESTAMP_MISMATCH",
+            "index timestamp differs from record"))
+    if row.status != int(message.status or 0):
+        issues.append(("INDEX_STATUS_MISMATCH", "index status differs from HTTP block"))
+    if row.mime != mime_type(message.headers):
+        issues.append(("INDEX_MIME_MISMATCH", "index MIME differs from HTTP block"))
+    if row.digest != record.header("WARC-Payload-Digest"):
+        issues.append(("INDEX_DIGEST_MISMATCH",
+            "index digest differs from record"))
+    if record.record_type not in ("response", "revisit"):
+        issues.append(("INDEX_RECORD_TYPE_MISMATCH",
+            "index points at a non-response record"))
+    return issues
 
 def lookup(rows: Iterable[CdxRow], url: str, ts14: str) -> CdxRow | None:
     """按 URL + 时间戳返回最接近且不晚于 ts 的快照。"""

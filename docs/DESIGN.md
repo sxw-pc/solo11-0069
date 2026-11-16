@@ -74,7 +74,7 @@ replay ◄─ cdx + archive_io（按 URL+时间戳定位单条记录）
 
 ## 回放
 
-回放服务是只读的：启动时扫描归档、加载索引摘要；请求时按 URL+ts 查找 CDX 行，定位卷与解压偏移，解析单条记录。revisit 会沿 `WARC-Refers-To` 取回原响应体。响应保留原始状态与头，并附加 `X-Archive-*` 溯源。错误分支稳定：参数非法 400、无快照 404、索引/归档损坏 500。
+回放服务是只读的：启动时只做归档扫描与 CDX 语法解析（`read_index` 保持纯格式职责）；请求时按 URL+ts 查找 CDX 行，定位卷与解压偏移，并在发送任何响应字节前把所选行与实际 WARC 记录逐字段绑定——URL/urlkey、timestamp、status、MIME、payload digest、length 与 response/revisit 类型，规则与 `verify` 共用 `cdx.bind_index_row`。revisit 会沿 `WARC-Refers-To` 取回原响应体，同时验证 profile、目标存在及整条链的 payload digest 一致。绑定失败返回稳定 `REPLAY_INDEX_RECORD_MISMATCH`（500），不输出实体、不混用 CDX/WARC 溯源头；校验按行隔离，单行损坏不封锁同索引内的健康快照。响应保留原始状态与头，并附加 `X-Archive-*` 溯源。错误分支稳定：参数非法 400、无快照 404、索引/归档/绑定损坏 500。
 
 ## 取舍
 

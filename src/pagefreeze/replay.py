@@ -11,12 +11,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 from .archive_io import load_archive
-from .cdx import CdxRow, lookup, read_index
+from .cdx import CdxRow, bind_index_row, lookup, read_index
 from .errors import CdxError, PagefreezeError, PolicyError, ReplayError
 from .httpmsg import parse_response
 from .policy import normalize_url, validate_bind_host
 from .digest import sha256_file
 from .util import TIMESTAMP_RE, parse_clock
+from .warc import REVISIT_PROFILE
 
 _LOGGER = logging.getLogger(__name__)
 _HOP_BY_HOP = {"content-length", "transfer-encoding", "connection", "keep-alive"}
@@ -68,7 +69,12 @@ class ReplayArchive:
         return len(self.rows)
 
     def resolve(self, url: str, ts14: str) -> ReplaySnapshot:
-        """按 URL + 时间戳选择快照，并跟随 revisit 找到首见正文。"""
+        """按 URL + 时间戳选择快照，并跟随 revisit 找到首见正文。
+
+        选中 CDX 行后、构造任何响应字节前，逐字段绑定行与其按
+        (filename, offset) 定位到的 WARC 记录，并验证 revisit 正文目标链；
+        绑定失败只影响当前 URL，同索引内其它一致行仍可回放。
+        """
         if self.load_error is not None:
             raise self.load_error
         try:
@@ -81,15 +87,8 @@ class ReplayArchive:
         selected = self._by_location.get((row.filename, row.offset))
         if selected is None:
             raise ReplayError("REPLAY_ARCHIVE_ERROR", "index entry does not locate a record")
-        final = selected
-        for _ in range(8):
-            if final.record_type != "revisit":
-                break
-            target_id = final.header("WARC-Refers-To")
-            target = self._by_id.get(target_id or "")
-            if target is None:
-                raise ReplayError("REPLAY_ARCHIVE_ERROR", "revisit target is missing")
-            final = target
+        self._bind_row(row, selected)
+        final = self._follow_revisit_chain(selected)
         try:
             message = parse_response(selected.block)
             final_message = parse_response(final.block)
@@ -103,6 +102,35 @@ class ReplayArchive:
             headers=message.headers,
             body=final_message.body,
         )
+
+    def _bind_row(self, row: CdxRow, record: Any) -> None:
+        """把所选 CDX 行与实际 WARC 记录逐字段绑定；不通过则拒绝回放。"""
+        mismatches = bind_index_row(row, record)
+        if mismatches:
+            code, _message = mismatches[0]
+            raise ReplayError("REPLAY_INDEX_RECORD_MISMATCH",
+                f"index row is not bound to the located record: {code}")
+
+    def _follow_revisit_chain(self, selected: Any) -> Any:
+        """跟随 revisit 的 WARC-Refers-To 链并验证目标链与 payload digest。"""
+        final = selected
+        for _ in range(8):
+            if final.record_type != "revisit":
+                return final
+            if (final.header("WARC-Profile") or "") != REVISIT_PROFILE:
+                raise ReplayError("REPLAY_INDEX_RECORD_MISMATCH",
+                    "revisit record has an unexpected WARC-Profile")
+            target_id = final.header("WARC-Refers-To")
+            target = self._by_id.get(target_id or "")
+            if target is None:
+                raise ReplayError("REPLAY_INDEX_RECORD_MISMATCH",
+                    "revisit target is missing from the archive")
+            if final.header("WARC-Payload-Digest") != target.header("WARC-Payload-Digest"):
+                raise ReplayError("REPLAY_INDEX_RECORD_MISMATCH",
+                    "revisit payload digest differs from its target")
+            final = target
+        raise ReplayError("REPLAY_INDEX_RECORD_MISMATCH",
+            "revisit reference chain is too long or cyclic")
 
 
 class _ReplayServer(ThreadingHTTPServer):

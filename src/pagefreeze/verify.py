@@ -4,12 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from .archive_io import ArchiveLoad, load_archive
-from .cdx import CdxRow, read_index
+from .cdx import CdxRow, bind_index_row, read_index
 from .errors import PagefreezeError
-from .httpmsg import mime_type, parse_response
-from .policy import normalize_url, urlkey
+from .httpmsg import parse_response
 from .digest import digest_bytes
-from .util import parse_warc_date, timestamp14
 from .warc import REVISIT_PROFILE, WarcRecord
 
 _REQUIRED = ("WARC-Type", "WARC-Record-ID", "WARC-Date",
@@ -99,39 +97,9 @@ def _index_size(loaded: ArchiveLoad) -> dict[str, int]:
 def _check_index_row(
     row: CdxRow, record: WarcRecord, algorithm: str,
                      issues: list[VerifyIssue]) -> None:
-    if row.length != record.length:
-        _issue(issues, row.filename, record.record_index,
-               "INDEX_LENGTH_MISMATCH", "index length differs from record length")
-    target = record.header("WARC-Target-URI")
-    date_value = record.header("WARC-Date")
-    try:
-        message = parse_response(record.block)
-        normalized = normalize_url(target or "")
-        parsed_date = parse_warc_date(date_value or "")
-    except PagefreezeError as exc:
-        _issue(issues, row.filename, record.record_index, exc.code, exc.message)
-        return
-    if row.url != normalized:
-        _issue(issues, row.filename, record.record_index,
-               "INDEX_URL_MISMATCH", "index URL differs from record")
-    if row.urlkey != urlkey(normalized):
-        _issue(issues, row.filename, record.record_index,
-               "INDEX_URLKEY_MISMATCH", "index urlkey differs from record")
-    if row.timestamp != timestamp14(parsed_date):
-        _issue(issues, row.filename, record.record_index,
-               "INDEX_TIMESTAMP_MISMATCH", "index timestamp differs from record")
-    if row.status != int(message.status or 0):
-        _issue(issues, row.filename, record.record_index,
-               "INDEX_STATUS_MISMATCH", "index status differs from HTTP block")
-    if row.mime != mime_type(message.headers):
-        _issue(issues, row.filename, record.record_index,
-               "INDEX_MIME_MISMATCH", "index MIME differs from HTTP block")
-    if row.digest != record.header("WARC-Payload-Digest"):
-        _issue(issues, row.filename, record.record_index,
-               "INDEX_DIGEST_MISMATCH", "index digest differs from record")
-    if record.record_type not in ("response", "revisit"):
-        _issue(issues, row.filename, record.record_index,
-               "INDEX_RECORD_TYPE_MISMATCH", "index points at a non-response record")
+    # 逐行绑定规则与回放服务共用 cdx.bind_index_row，保证两个入口判定一致。
+    for code, message in bind_index_row(row, record):
+        _issue(issues, row.filename, record.record_index, code, message)
 
 
 def _check_index(
